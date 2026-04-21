@@ -17,6 +17,36 @@ class Device(Interface):
             "class_name": device.class_name,
         }
 
+    @staticmethod
+    def serialize_drum_pad(pad):
+        if pad is None:
+            return None
+
+        pad_id = Interface.save_obj(pad)
+
+        try:
+            chains = pad.chains
+            chain_count = len(chains)
+        except Exception:
+            chain_count = 0
+
+        try:
+            note = pad.note
+        except Exception:
+            note = None
+
+        try:
+            name = pad.name
+        except Exception:
+            name = ""
+
+        return {
+            "id": pad_id,
+            "name": name,
+            "note": note,
+            "chain_count": chain_count,
+        }
+
     def __init__(self, c_instance, socket):
         super(Device, self).__init__(c_instance, socket)
 
@@ -25,3 +55,6 @@ class Device(Interface):
 
     def get_type(self, ns):
         return str(ns.type)
+
+    def get_drum_pads(self, ns):
+        return map(Device.serialize_drum_pad, ns.drum_pads)

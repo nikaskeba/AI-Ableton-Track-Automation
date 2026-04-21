@@ -1,249 +1,154 @@
-# Ableton.js
+# AI Ableton Track Automation
 
-[![Current Version](https://img.shields.io/npm/v/ableton-js.svg)](https://www.npmjs.com/package/ableton-js/)
+AI Ableton Track Automation is a local control surface, API, CLI, and React app
+for driving Ableton Live with structured commands and LLM-assisted MIDI
+generation.
 
-Ableton.js lets you control your instance or instances of Ableton using Node.js.
-It tries to cover as many functions as possible.
+It is built on top of [ableton-js](https://github.com/leolabs/ableton-js), with
+additional tooling for:
 
-This package is still a work-in-progress. My goal is to expose all of
-[Ableton's MIDI Remote Script](https://nsuspray.github.io/Live_API_Doc/11.0.0.xml)
-functions to TypeScript. If you'd like to contribute, please feel free to do so.
+- selecting tracks and clip slots visually
+- reading track, device, clip, and preset context from Live
+- generating MIDI for drum racks and melodic instruments
+- using one or more reference clips as creative context
+- debugging raw LLM responses and parsed execution plans
 
-## Sponsored Message
+## What It Does
 
-I've used Ableton.js to build a setlist manager called
-[AbleSet](https://ableset.app). AbleSet allows you to easily manage and control
-your Ableton setlists from any device, re-order songs and add notes to them, and
-get an overview of the current state of your set.
+- Connects to Ableton Live through an `AbletonJS` MIDI Remote Script
+- Exposes a local Node API for dashboard state and AI-assisted clip creation
+- Provides a React frontend for track browsing, slot targeting, and prompt-based
+  generation
+- Includes a CLI for transport, tempo, track, scene, device, parameter, and
+  clip inspection
 
-[![AbleSet Header](https://public-files.gumroad.com/variants/oplxt68bsgq1hu61t8bydfkgppr5/baaca0eb0e33dc4f9d45910b8c86623f0144cea0fe0c2093c546d17d535752eb)](https://ableset.app/?utm_campaign=ableton-js)
+## Current Features
 
-## Prerequisites
+- Track list with active instrument labeling
+- Plugin preset discovery for supported VST devices like Serum
+- Clip-slot selection and highlighting
+- Multi-reference clip context for generation
+- Automatic LLM plan parsing and execution into a selected slot
+- Persistent raw LLM response panel for debugging
+- More tolerant JSON parsing for model output with comments or loose formatting
 
-To use this library, you'll need to install and activate the MIDI Remote Script
-in Ableton.js. To do that, copy the `midi-script` folder of this repo to
-Ableton's Remote Scripts folder and rename it to `AbletonJS`. The MIDI Remote
-Scripts folder is usually located at
-`~/Music/Ableton/User Library/Remote Scripts`
+## Project Structure
 
-After starting Ableton Live, add the script to your list of control surfaces:
+- `web/`: React frontend
+- `web-api.mjs`: local API server for Live state and LLM execution
+- `ableton-cli.mjs`: command-line utility for common Ableton actions
+- `midi-script/`: Ableton MIDI Remote Script installed as `AbletonJS`
+- `example-control.mjs`: minimal connection / control example
 
-![Ableton Live Settings](https://i.imgur.com/a34zJca.png)
+## Requirements
 
-If you've forked this project on macOS, you can also use yarn to do that for
-you. Running `yarn ableton10:start` or `yarn ableton11:start` (depending on your
-app version) will copy the `midi-script` folder, open Ableton and show a stream
-of log messages until you kill it.
+- Ableton Live with the `AbletonJS` control surface enabled
+- Node.js
+- A local `.env` file with your LLM endpoint configuration
 
-## Using Ableton.js
+## Install And Run
 
-This library exposes an `Ableton` class which lets you control the entire
-application. You can instantiate it once and use TS to explore available
-features.
+Install dependencies:
 
-Example:
-
-```typescript
-import { Ableton } from "ableton-js";
-
-// Log all messages to the console
-const ableton = new Ableton({ logger: console });
-
-const test = async () => {
-  // Establishes a connection with Live
-  await ableton.start();
-
-  // Observe the current playback state and tempo
-  ableton.song.addListener("is_playing", (p) => console.log("Playing:", p));
-  ableton.song.addListener("tempo", (t) => console.log("Tempo:", t));
-
-  // Get the current tempo
-  const tempo = await ableton.song.get("tempo");
-  console.log("Current tempo:", tempo);
-
-  // Set the tempo
-  await ableton.song.set("tempo", 85);
-};
-
-test();
+```bash
+yarn install
 ```
 
-## Events
+Start the API:
 
-There are a few events you can use to get more under-the-hood insights:
-
-```ts
-// A connection to Ableton is established
-ab.on("connect", (e) => console.log("Connect", e));
-
-// Connection to Ableton was lost,
-// also happens when you load a new project
-ab.on("disconnect", (e) => console.log("Disconnect", e));
-
-// A raw message was received from Ableton
-ab.on("message", (m) => console.log("Message:", m));
-
-// A received message could not be parsed
-ab.on("error", (e) => console.error("Error:", e));
-
-// Fires on every response with the current ping
-ab.on("ping", (ping) => console.log("Ping:", ping, "ms"));
+```bash
+npm run api:dev
 ```
 
-## Protocol
+Start the frontend:
 
-Ableton.js uses UDP to communicate with the MIDI Script. Each message is a JSON
-object containing required data and a UUID so request and response can be
-associated with each other.
-
-### Used Ports
-
-Both the client and the server bind to a random available port and store that
-port in a local file so the other side knows which port to send messages to.
-
-### Compression and Chunking
-
-To allow sending large JSON payloads, requests to and responses from the MIDI
-Script are compressed using gzip and chunked to fit into the maximum allowed
-package size. The first byte of every message chunk contains the chunk index
-(0x00-0xFF) followed by the gzipped chunk. The last chunk always has the index
-0xFF. This indicates to the JS library that the previous received messages
-should be stiched together, unzipped, and processed.
-
-### Caching
-
-Certain props are cached on the client to reduce the bandwidth over UDP. To do
-this, the Ableton plugin generates an MD5 hash of the prop, called ETag, and
-sends it to the client along with the data.
-
-The client stores both the ETag and the data in an LRU cache and sends the
-latest stored ETag to the plugin the next time the same prop is requested. If
-the data still matches the ETag, the plugin responds with a placeholder object
-and the client returns the cached data.
-
-### Commands
-
-A command payload consists of the following properties:
-
-```js
-{
-  "uuid": "a20f25a0-83e2-11e9-bbe1-bd3a580ef903", // A unique command id
-  "ns": "song", // The command namespace
-  "nsid": null, // The namespace id, for example to address a specific track or device
-  "name": "get_prop", // Command name
-  "args": { "prop": "current_song_time" }, // Command arguments
-  "etag": "4e0794e44c7eb58bdbbbf7268e8237b4", // MD5 hash of the data if it might be cached locally
-  "cache": true // If this is true, the plugin will calculate an etag and return a placeholder if it matches the provided one
-}
+```bash
+npm run web:dev
 ```
 
-The MIDI Script answers with a JSON object looking like this:
+Then open:
 
-```js
-{
-  "data": 0.0, // The command's return value, can be of any JSON-compatible type
-  "event": "result", // This can be 'result' or 'error'
-  "uuid": "a20f25a0-83e2-11e9-bbe1-bd3a580ef903" // The same UUID that was used to send the command
-}
+```text
+http://127.0.0.1:5173
 ```
 
-If you're getting a cached prop, the JSON object could look like this:
+## Ableton Setup
 
-```js
-{
-  "data": { "data": 0.0, "etag": "4e0794e44c7eb58bdbbbf7268e8237b4" },
-  "event": "result", // This can be 'result' or 'error'
-  "uuid": "a20f25a0-83e2-11e9-bbe1-bd3a580ef903" // The same UUID that was used to send the command
-}
+Copy `midi-script/` into your Ableton User Library Remote Scripts folder and
+rename it to `AbletonJS`.
+
+Typical macOS path:
+
+```text
+~/Music/Ableton/User Library/Remote Scripts/AbletonJS
 ```
 
-Or, if the data hasn't changed, it looks like this:
+Then in Ableton Live:
 
-```js
-{
-  "data": { "__cached": true },
-  "event": "result", // This can be 'result' or 'error'
-  "uuid": "a20f25a0-83e2-11e9-bbe1-bd3a580ef903" // The same UUID that was used to send the command
-}
+1. Open Preferences
+2. Go to Link, Tempo & MIDI
+3. Choose `AbletonJS` as a Control Surface
+
+If Live does not see the script immediately, restart Live or toggle the control
+surface off and back on.
+
+## Environment
+
+Create a `.env` file like:
+
+```bash
+ABLETON_LLM_BASE_URL="https://your-endpoint/v1/chat/completions"
+ABLETON_LLM_MODEL="your-model"
+ABLETON_LLM_API_KEY="your-token"
+ABLETON_WEB_API_PORT=3030
 ```
 
-### Events
+See `.env.example` for the current shape.
 
-To attach an event listener to a specific property, the client sends a command
-object:
+## CLI Examples
 
-```js
-{
-  "uuid": "922d54d0-83e3-11e9-ba7c-917478f8b91b", // A unique command id
-  "ns": "song", // The command namespace
-  "name": "add_listener", // The command to add an event listener
-  "args": {
-    "prop": "current_song_time", // The property that should be watched
-    "eventId": "922d2dc0-83e3-11e9-ba7c-917478f8b91b" // A unique event id
-  }
-}
+```bash
+npm run ableton:cli -- status
+npm run ableton:cli -- tempo
+npm run ableton:cli -- tempo 128
+npm run ableton:cli -- tracks
+npm run ableton:cli -- devices "1-707 Core Kit"
+npm run ableton:cli -- params "1-707 Core Kit" "707 Core Kit"
+npm run ableton:cli -- clip-notes "1-707 Core Kit" 1
+npm run ableton:cli -- scenes
 ```
 
-The MIDI Script answers with a JSON object looking like this to confirm that the
-listener has been attached:
+## AI Workflow
 
-```js
-{
-  "data": "922d2dc0-83e3-11e9-ba7c-917478f8b91b", // The unique event id
-  "event": "result", // Should be result, is error when something goes wrong
-  "uuid": "922d54d0-83e3-11e9-ba7c-917478f8b91b" // The unique command id
-}
-```
+In the frontend you can:
 
-From now on, when the observed property changes, the MIDI Script sends an event
-object:
+1. Select a target track
+2. Select a target clip slot
+3. Optionally add one or more reference clips
+4. Enter a prompt
+5. Run AI generation into the selected slot
 
-```js
-{
-  "data": 68.0, // The new value, can be any JSON-compatible type
-  "event": "922d2dc0-83e3-11e9-ba7c-917478f8b91b", // The event id
-  "uuid": null // Is always null and may be removed in future versions
-}
-```
+The app sends:
 
-Note that for some values, this event is emitted multiple times per second.
-20-30 updates per second are not unusual.
+- selected track and device context
+- plugin preset name when available
+- clip slot context
+- optional reference clip summaries and note events
 
-### Connection Events
+The raw LLM response remains visible even when parsing or execution fails, which
+helps debug prompt and plan issues quickly.
 
-The MIDI Script sends events when it starts and when it shuts down. These look
-like this:
+## Notes
 
-```js
-{
-  "data": null, // Is always null
-  "event": "connect", // Can be connect or disconnect
-  "uuid": null // Is always null and may be removed in future versions
-}
-```
+- Drum-rack pad serialization is partially implemented, but some Live devices
+  still expose limited structure depending on what Ableton returns.
+- Plugin preset metadata is only available for device types that expose preset
+  information through Live's object model.
+- This project currently prioritizes local single-user workflow over packaging
+  for npm distribution.
 
-When you open a new Project in Ableton, the script will shut down and start
-again.
+## Attribution
 
-When Ableton.js receives a disconnect event, it clears all current event
-listeners and pending commands. It is usually a good idea to attach all event
-listeners and get properties each time the `connect` event is emitted.
-
-### Findings
-
-In this section, I'll note interesting pieces of information related to
-Ableton's Python framework that I stumble upon during the development of this
-library.
-
-- It seems like Ableton's listener to `output_meter_level` doesn't quite work as
-  well as expected, hanging every few 100ms. Listening to `output_meter_left` or
-  `output_meter_right` works better. See
-  [Issue #4](https://github.com/leolabs/ableton-js/issues/4)
-- The `playing_status` listener of clip slots never fires in Ableton. See
-  [Issue #25](https://github.com/leolabs/ableton-js/issues/25)
-
-## Contributing
-
-If you'd like to add features to this project or submit a bugfix, please feel
-free to open a pull request. Before committing changes to any of the TypeScript
-files, please run `yarn format` to format the code using Prettier.
+This project started from `ableton-js` and extends it with an app layer for
+visual control, prompt-driven generation, and workflow-specific MIDI
+automation.
