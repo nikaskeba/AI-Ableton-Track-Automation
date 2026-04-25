@@ -78,6 +78,9 @@ button {
 
 .hero,
 .stats-grid,
+.view-tabs,
+.session-panel,
+.arrangement-panel,
 .content-grid,
 .error-banner {
   position: relative;
@@ -183,7 +186,13 @@ button {
 
 .content-grid {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1.35fr) minmax(320px, 0.8fr);
+  grid-template-columns: minmax(0, 1.5fr) minmax(340px, 0.8fr);
+  gap: 18px;
+}
+
+.workspace-column {
+  display: flex;
+  flex-direction: column;
   gap: 18px;
 }
 
@@ -235,46 +244,286 @@ button {
   line-height: 1;
 }
 
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.view-tabs {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 6px;
+  border: 1px solid rgba(34, 52, 62, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.54);
+  box-shadow: 0 12px 30px rgba(31, 44, 51, 0.08);
 }
 
-.track-button {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  width: 100%;
+.view-tab {
+  min-width: 142px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.view-tab:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.view-tab--active {
+  background: linear-gradient(135deg, rgba(15, 124, 122, 0.16), rgba(255, 255, 255, 0.86));
+  color: var(--accent-deep);
+  box-shadow: inset 0 0 0 1px rgba(15, 124, 122, 0.18);
+}
+
+.session-panel {
+  position: relative;
   padding: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  border-radius: 30px;
+  margin-bottom: 18px;
+}
+
+.session-board {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  overflow-x: auto;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.session-track {
+  flex: 1 0 260px;
+  min-width: 0;
+  border: 1px solid rgba(34, 52, 62, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+
+.session-track--selected {
+  background: rgba(255, 255, 255, 0.38);
+  box-shadow:
+    0 0 0 2px rgba(15, 28, 36, 0.82),
+    0 12px 28px rgba(24, 33, 38, 0.12);
+}
+
+.session-track__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(34, 52, 62, 0.16);
+  background: var(--track-soft);
+  color: #1a2a32;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-track__title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-track__slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0;
+}
+
+.session-slot {
+  position: relative;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(34, 52, 62, 0.14);
+  border-radius: 5px;
+  padding: 0 12px;
+  color: #111c22;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    box-shadow 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.session-slot--empty {
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.session-slot--filled {
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.session-slot--playing {
+  background: color-mix(in srgb, var(--track-strong) 28%, white 72%);
+}
+
+.session-slot--selected {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.95),
+    0 0 0 3px rgba(6, 17, 24, 0.88),
+    0 10px 20px rgba(13, 24, 31, 0.14);
+}
+
+.session-slot__name {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(12, 19, 23, 0.94);
+  font-size: 1rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-add-clip {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(34, 52, 62, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.62);
+  color: rgba(31, 44, 51, 0.72);
+  font-size: 1.15rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.session-add-track-column {
+  flex: 0 0 44px;
+  min-width: 44px;
+}
+
+.session-add-track {
+  width: 100%;
+  height: 44px;
+  border: 1px solid rgba(34, 52, 62, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.52);
+  color: rgba(31, 44, 51, 0.72);
+  font-size: 1.25rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.session-add-track:hover,
+.session-add-clip:hover {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+}
+
+.arrangement-panel {
+  margin-bottom: 18px;
+}
+
+.arrangement-panel__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.arrangement-panel__header strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.15rem;
+}
+
+.arrangement-panel__header p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.arrangement-board {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.arrangement-ruler,
+.arrangement-lane {
+  display: grid;
+  grid-template-columns: 220px repeat(var(--arrangement-columns, 8), minmax(120px, 1fr));
+  gap: 8px;
+  min-width: 1120px;
+}
+
+.arrangement-ruler span {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.arrangement-lane__label,
+.arrangement-cell {
+  min-height: 42px;
+  border: 1px solid rgba(34, 52, 62, 0.12);
+  border-radius: 8px;
+}
+
+.arrangement-lane__label {
+  padding: 0 12px;
+  background: var(--track-soft);
+  color: #1a2a32;
+  font-weight: 800;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrangement-cell {
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.46);
+  color: var(--text);
   text-align: left;
 }
 
-.track-button--selected {
-  background: linear-gradient(135deg, rgba(15, 124, 122, 0.17), rgba(213, 97, 60, 0.12));
-  border-color: rgba(15, 124, 122, 0.22);
+.arrangement-cell--filled {
+  background: linear-gradient(135deg, var(--track-soft), rgba(255, 255, 255, 0.88));
+  border-color: rgba(34, 52, 62, 0.18);
 }
 
-.track-button__index {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(15, 124, 122, 0.12);
-  color: var(--accent-deep);
+.arrangement-cell--selected {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.95),
+    0 0 0 3px rgba(6, 17, 24, 0.86);
+}
+
+.arrangement-cell span {
+  display: block;
+  overflow: hidden;
   font-weight: 700;
-}
-
-.track-button__name {
-  font-size: 0.98rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-panel {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 156px;
 }
 
 .detail-panel__section {
@@ -283,8 +532,7 @@ button {
   gap: 14px;
 }
 
-.device-grid,
-.slots-grid {
+.device-grid {
   display: grid;
   gap: 14px;
 }
@@ -293,12 +541,7 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
 }
 
-.slots-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
 .device-card,
-.slot-card,
 .prompt-preview {
   background: var(--panel-strong);
   border: 1px solid var(--line);
@@ -315,8 +558,7 @@ button {
   text-align: left;
 }
 
-.device-card__topline,
-.slot-card__topline {
+.device-card__topline {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -379,33 +621,6 @@ button {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent-deep), var(--accent));
-}
-
-.slot-card {
-  min-height: 176px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  border: 1px solid var(--line);
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.slot-card--filled {
-  background: linear-gradient(180deg, rgba(255, 248, 236, 0.98), rgba(246, 196, 137, 0.3));
-}
-
-.slot-card--selected {
-  border-color: rgba(15, 124, 122, 0.4);
-  box-shadow: 0 0 0 3px rgba(15, 124, 122, 0.14);
-}
-
-.slot-card h4 {
-  margin: 0;
-  font-size: 1.02rem;
 }
 
 .command-panel {
@@ -515,6 +730,31 @@ button {
   background: rgba(255, 255, 255, 0.74);
 }
 
+.selected-clip-panel strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.05rem;
+}
+
+.selected-clip-panel__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.selected-clip-panel__toggle {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+}
+
+.selected-clip-panel p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .selected-slot-card strong {
   display: block;
   margin-top: 8px;
@@ -594,6 +834,10 @@ button {
   .hero {
     flex-direction: column;
     align-items: start;
+  }
+
+  .session-board {
+    overflow-x: auto;
   }
 }
 

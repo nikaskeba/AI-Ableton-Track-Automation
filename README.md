@@ -72,6 +72,16 @@ Then open:
 http://127.0.0.1:5173
 ```
 
+### macOS launcher
+
+You can also double-click:
+
+```text
+Start AI Ableton Track Automation.command
+```
+
+This opens Terminal and starts the API and frontend in separate tabs.
+
 ## Ableton Setup
 
 Copy `midi-script/` into your Ableton User Library Remote Scripts folder and

@@ -13,6 +13,7 @@ const LLM_BASE_URL =
   process.env.ABLETON_LLM_BASE_URL || "https://ollama.skeba.info/v1/chat/completions";
 const LLM_MODEL = process.env.ABLETON_LLM_MODEL || "gpt-oss-20b";
 const LLM_API_KEY = process.env.ABLETON_LLM_API_KEY || "";
+const MIN_SESSION_SCENES = Number(process.env.ABLETON_MIN_SESSION_SCENES || 8);
 
 let queue = Promise.resolve();
 
@@ -334,9 +335,36 @@ async function summarizeTrack(track, index) {
 }
 
 async function summarizeTrackListItem(track, index) {
-  const devices = await track.get("devices").catch(() => []);
+  const [devices, clipSlots] = await Promise.all([
+    track.get("devices").catch(() => []),
+    track.get("clip_slots").catch(() => []),
+  ]);
   const primaryDevice =
     devices.find((device) => device.raw?.type === "instrument") ?? devices[0] ?? null;
+
+  const clipSlotSummaries = await Promise.all(
+    clipSlots.slice(0, 12).map(async (slot, slotIndex) => {
+      const [reportedHasClip, isPlaying, isTriggered, clip] = await Promise.all([
+        slot.get("has_clip").catch(() => false),
+        slot.get("is_playing").catch(() => false),
+        slot.get("is_triggered").catch(() => false),
+        slot.get("clip", false).catch(() => null),
+      ]);
+      const hasClip = Boolean(reportedHasClip || clip);
+
+      return {
+        index: slotIndex + 1,
+        hasClip,
+        isPlaying,
+        isTriggered,
+        clip: clip
+          ? {
+              name: clip.raw?.name || `Clip ${slotIndex + 1}`,
+            }
+          : null,
+      };
+    }),
+  );
 
   if (!primaryDevice) {
     return {
@@ -345,6 +373,7 @@ async function summarizeTrackListItem(track, index) {
       displayName: track.raw.name,
       primaryDeviceName: null,
       currentPresetName: null,
+      clipSlots: clipSlotSummaries,
     };
   }
 
@@ -369,6 +398,7 @@ async function summarizeTrackListItem(track, index) {
         : primaryDeviceName || track.raw.name,
     primaryDeviceName,
     currentPresetName,
+    clipSlots: clipSlotSummaries,
   };
 }
 
@@ -426,13 +456,45 @@ async function getDashboard(trackIndex) {
   return publicDashboard;
 }
 
+async function createMidiTrackAndDashboard() {
+  return withAbleton(async (ableton) => {
+    await ableton.song.createMidiTrack(-1);
+    const tracks = await ableton.song.get("tracks");
+    const dashboard = await buildDashboardFromAbleton(ableton, tracks.length);
+    const { _tracks, ...publicDashboard } = dashboard;
+
+    return publicDashboard;
+  });
+}
+
+async function createSceneAndDashboard(trackIndex) {
+  return withAbleton(async (ableton) => {
+    await ableton.song.createScene(-1);
+    const dashboard = await buildDashboardFromAbleton(ableton, trackIndex);
+    const { _tracks, ...publicDashboard } = dashboard;
+
+    return publicDashboard;
+  });
+}
+
+async function ensureMinimumScenes(ableton, minimumScenes) {
+  let scenes = await ableton.song.get("scenes");
+
+  while (scenes.length < minimumScenes) {
+    await ableton.song.createScene(-1);
+    scenes = await ableton.song.get("scenes");
+  }
+
+  return scenes;
+}
+
 async function buildDashboardFromAbleton(ableton, trackIndex) {
   const [tempo, isPlaying, currentSongTime, tracks, scenes] = await Promise.all([
     ableton.song.get("tempo"),
     ableton.song.get("is_playing"),
     ableton.song.get("current_song_time"),
     ableton.song.get("tracks"),
-    ableton.song.get("scenes"),
+    ensureMinimumScenes(ableton, MIN_SESSION_SCENES),
   ]);
 
   const selectedTrackIndex =
@@ -933,6 +995,20 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/dashboard") {
       const trackIndex = Number(url.searchParams.get("track") || "1");
       const payload = await enqueue(() => getDashboard(trackIndex));
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/tracks/midi") {
+      const payload = await enqueue(() => createMidiTrackAndDashboard());
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/scenes") {
+      const body = await readJsonBody(req);
+      const trackIndex = Number(body.trackIndex || 1);
+      const payload = await enqueue(() => createSceneAndDashboard(trackIndex));
       sendJson(res, 200, payload);
       return;
     }

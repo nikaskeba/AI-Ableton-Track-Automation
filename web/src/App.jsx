@@ -33,70 +33,204 @@ function StatusPill({ active, children }) {
   );
 }
 
-function TrackButton({ track, selected, onClick }) {
+const TRACK_PALETTE = [
+  { strong: "#5c7bde", soft: "#d8e1ff", muted: "#b9c3ea" },
+  { strong: "#1693d8", soft: "#d2efff", muted: "#a8d6ef" },
+  { strong: "#d1a121", soft: "#f6e39b", muted: "#ead07a" },
+  { strong: "#d56f3c", soft: "#f8d4bf", muted: "#ebc0aa" },
+  { strong: "#4d9a63", soft: "#d5efd8", muted: "#b9dcbf" },
+  { strong: "#a06bc9", soft: "#ebdcfa", muted: "#d2b9eb" },
+];
+const VISIBLE_CLIP_ROWS = 8;
+const VIEW_TABS = [
+  { id: "session", label: "Session View" },
+  { id: "arrangement", label: "Arrangement View" },
+];
+
+function getTrackPalette(trackIndex) {
+  return TRACK_PALETTE[(trackIndex - 1) % TRACK_PALETTE.length];
+}
+
+function getVisibleClipSlots(trackSlots = [], richSlots = []) {
+  const slotsByIndex = new Map();
+
+  for (const slot of trackSlots) {
+    slotsByIndex.set(slot.index, slot);
+  }
+
+  for (const slot of richSlots) {
+    slotsByIndex.set(slot.index, {
+      ...slotsByIndex.get(slot.index),
+      ...slot,
+    });
+  }
+
+  const rowCount = Math.max(
+    VISIBLE_CLIP_ROWS,
+    ...Array.from(slotsByIndex.keys(), (slotIndex) => Number(slotIndex) || 0),
+  );
+
+  return Array.from({ length: rowCount }, (_, index) => {
+    const slotIndex = index + 1;
+    const slot =
+      slotsByIndex.get(slotIndex) || {
+        index: slotIndex,
+        hasClip: false,
+        isPlaying: false,
+        isTriggered: false,
+        clip: null,
+      };
+
+    return {
+      ...slot,
+      hasClip: Boolean(slot.hasClip || slot.clip),
+    };
+  });
+}
+
+function SessionTrackColumn({
+  track,
+  richClipSlots = [],
+  isSelectedTrack,
+  selectedSlotIndex,
+  onSelectTrack,
+  onSelectSlot,
+  onAddClipRow,
+}) {
+  const palette = getTrackPalette(track.index);
+  const visibleSlots = getVisibleClipSlots(track.clipSlots, richClipSlots);
+
   return (
-    <button
-      className={`track-button ${selected ? "track-button--selected" : ""}`}
-      onClick={onClick}
-      type="button"
+    <article
+      className={`session-track ${isSelectedTrack ? "session-track--selected" : ""}`}
+      style={{
+        "--track-strong": palette.strong,
+        "--track-soft": palette.soft,
+        "--track-muted": palette.muted,
+      }}
     >
-      <span className="track-button__index">{track.index}</span>
-      <span className="track-button__name">{track.displayName || track.name}</span>
-    </button>
+      <button
+        className="session-track__header"
+        onClick={onSelectTrack}
+        type="button"
+      >
+        <span className="session-track__title">
+          {track.displayName || track.primaryDeviceName || track.name}
+        </span>
+      </button>
+
+      <div className="session-track__slots">
+        {visibleSlots.map((slot) => {
+          const isSelectedSlot = isSelectedTrack && selectedSlotIndex === slot.index;
+          const clipName = slot.clip?.name || "";
+          const hasClip = Boolean(slot.hasClip || slot.clip);
+
+          return (
+            <button
+              key={slot.index}
+              className={`session-slot ${
+                hasClip ? "session-slot--filled" : "session-slot--empty"
+              } ${slot.isPlaying ? "session-slot--playing" : ""} ${
+                isSelectedSlot ? "session-slot--selected" : ""
+              }`}
+              onClick={() => onSelectSlot(slot.index)}
+              type="button"
+            >
+              {hasClip ? (
+                <span className="session-slot__name">{clipName || `Clip ${slot.index}`}</span>
+              ) : null}
+            </button>
+          );
+        })}
+        <button
+          className="session-add-clip"
+          onClick={onAddClipRow}
+          title={`Add clip row for ${track.displayName || track.name}`}
+          type="button"
+        >
+          +
+        </button>
+      </div>
+    </article>
   );
 }
 
-function ParameterMeter({ parameter }) {
-  const range = parameter.max - parameter.min || 1;
-  const percentage = ((parameter.value - parameter.min) / range) * 100;
+function ArrangementView({ tracks = [], selectedTrackIndex, selectedSlotIndex, onSelectSlot }) {
+  const visibleRows = Math.max(
+    VISIBLE_CLIP_ROWS,
+    ...tracks.flatMap((track) =>
+      getVisibleClipSlots(track.clipSlots).map((slot) => slot.index),
+    ),
+  );
+  const timelineRows = Array.from({ length: visibleRows }, (_, index) => index + 1);
 
   return (
-    <div className="parameter-row">
-      <div>
-        <div className="parameter-row__name">{parameter.name}</div>
-        <div className="parameter-row__value">
-          {parameter.value.toFixed(2)} / {parameter.max}
+    <section className="panel arrangement-panel">
+      <div className="arrangement-panel__header">
+        <div>
+          <span className="field-label">Arrangement Sketch</span>
+          <strong>Structure clips into song sections</strong>
         </div>
-      </div>
-      <div className="parameter-row__bar">
-        <span style={{ width: `${Math.max(0, Math.min(100, percentage))}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function ClipSlotCard({ slot, selected, onSelect }) {
-  return (
-    <button
-      className={`slot-card ${slot.hasClip ? "slot-card--filled" : ""} ${
-        selected ? "slot-card--selected" : ""
-      }`}
-      onClick={onSelect}
-      type="button"
-    >
-      <div className="slot-card__topline">
-        <span>Slot {slot.index}</span>
-        <StatusPill active={slot.isPlaying}>
-          {slot.isPlaying ? "Playing" : slot.hasClip ? "Ready" : "Empty"}
-        </StatusPill>
+        <p>Session clips are shown as building blocks. The next step is writing these blocks into Ableton Arrangement.</p>
       </div>
 
-      {slot.clip ? (
-        <>
-          <h4>{slot.clip.name}</h4>
-          <p>
-            {slot.clip.noteCount} notes across{" "}
-            {slot.clip.uniquePitches.length || 0} pitches
-          </p>
-          <p>Length: {slot.clip.length} beats</p>
-        </>
-      ) : (
-        <>
-          <h4>Blank canvas</h4>
-          <p>Click to target this slot for generation or execution.</p>
-        </>
-      )}
-    </button>
+      <div
+        className="arrangement-board"
+        style={{ "--arrangement-columns": timelineRows.length }}
+      >
+        <div className="arrangement-ruler">
+          <span />
+          {timelineRows.map((slotIndex) => (
+            <span key={slotIndex}>Slot {slotIndex}</span>
+          ))}
+        </div>
+
+        {tracks.map((track) => {
+          const palette = getTrackPalette(track.index);
+          const visibleSlots = getVisibleClipSlots(track.clipSlots);
+
+          return (
+            <div
+              className="arrangement-lane"
+              key={track.index}
+              style={{
+                "--track-strong": palette.strong,
+                "--track-soft": palette.soft,
+              }}
+            >
+              <button
+                className="arrangement-lane__label"
+                onClick={() => onSelectSlot(track.index, selectedSlotIndex || 1)}
+                type="button"
+              >
+                {track.displayName || track.primaryDeviceName || track.name}
+              </button>
+              {timelineRows.map((slotIndex) => {
+                const slot = visibleSlots.find((item) => item.index === slotIndex);
+                const hasClip = Boolean(slot?.hasClip || slot?.clip);
+                const isSelected =
+                  selectedTrackIndex === track.index && selectedSlotIndex === slotIndex;
+
+                return (
+                  <button
+                    className={`arrangement-cell ${
+                      hasClip ? "arrangement-cell--filled" : "arrangement-cell--empty"
+                    } ${isSelected ? "arrangement-cell--selected" : ""}`}
+                    key={slotIndex}
+                    onClick={() => onSelectSlot(track.index, slotIndex)}
+                    type="button"
+                  >
+                    {hasClip ? (
+                      <span>{slot.clip?.name || `Clip ${slotIndex}`}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -104,7 +238,7 @@ export function App() {
   const [dashboard, setDashboard] = useState(null);
   const [selectedTrack, setSelectedTrack] = useState(1);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(null);
-  const [expandedDevices, setExpandedDevices] = useState({});
+  const [activeView, setActiveView] = useState("session");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -116,7 +250,6 @@ export function App() {
     "Create a MIDI idea that fits the selected track and instrument.",
   );
   const [referenceRows, setReferenceRows] = useState([]);
-  const previousTrackIndexRef = useRef(null);
   const selectedTrackRef = useRef(1);
   const refreshRequestIdRef = useRef(0);
   const referenceRowIdRef = useRef(0);
@@ -148,6 +281,36 @@ export function App() {
     });
 
     return data;
+  });
+
+  const addMidiTrack = useEffectEvent(async () => {
+    setError("");
+    const data = await fetchJson("/api/tracks/midi", {
+      method: "POST",
+    });
+
+    startTransition(() => {
+      setDashboard(data);
+      setSelectedTrack(data.selectedTrack.track.index);
+      setSelectedSlotIndex(data.selectedTrack.clipSlots?.[0]?.index ?? null);
+    });
+  });
+
+  const addClipRow = useEffectEvent(async (trackIndex = selectedTrack) => {
+    setError("");
+    const data = await fetchJson("/api/scenes", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ trackIndex }),
+    });
+
+    startTransition(() => {
+      setDashboard(data);
+      setSelectedTrack(data.selectedTrack.track.index);
+      setSelectedSlotIndex(data.selectedTrack.clipSlots?.at(-1)?.index ?? null);
+    });
   });
 
   const runAiToSelectedSlot = useEffectEvent(async () => {
@@ -252,19 +415,7 @@ export function App() {
   });
 
   useEffect(() => {
-    const nextTrackIndex = selected?.track?.index ?? null;
-    if (nextTrackIndex === null) {
-      return;
-    }
-
-    if (previousTrackIndexRef.current !== nextTrackIndex) {
-      previousTrackIndexRef.current = nextTrackIndex;
-      setExpandedDevices({});
-    }
-  }, [selected?.track?.index]);
-
-  useEffect(() => {
-    const slots = selected?.clipSlots ?? [];
+    const slots = getVisibleClipSlots(selected?.clipSlots);
     if (!slots.length) {
       setSelectedSlotIndex(null);
       return;
@@ -284,14 +435,24 @@ export function App() {
     }
   }, [selected?.clipSlots, selectedSlotIndex]);
 
-  const selectedSlot = selected?.clipSlots?.find((slot) => slot.index === selectedSlotIndex) ?? null;
+  const selectedVisibleSlots = getVisibleClipSlots(selected?.clipSlots);
+  const selectedSlot =
+    selectedVisibleSlots.find((slot) => slot.index === selectedSlotIndex) ?? null;
+  const workspaceTracks =
+    dashboard?.tracks?.map((track) =>
+      track.index === selected?.track?.index
+        ? {
+            ...track,
+            clipSlots: getVisibleClipSlots(track.clipSlots, selected.clipSlots),
+          }
+        : track,
+    ) ?? [];
 
-  function toggleDevice(trackIndex, deviceIndex) {
-    const key = `${trackIndex}-${deviceIndex}`;
-    setExpandedDevices((current) => ({
-      ...current,
-      [key]: !current[key],
-    }));
+  function selectClipSlot(trackIndex, slotIndex) {
+    startTransition(() => {
+      setSelectedTrack(trackIndex);
+      setSelectedSlotIndex(slotIndex);
+    });
   }
 
   function addReferenceRow() {
@@ -351,104 +512,118 @@ export function App() {
         <article className="panel stat-card">
           <span className="stat-card__label">Tempo</span>
           <strong>{dashboard?.song.tempo ?? "--"} BPM</strong>
-          <p>Live-scoped values from the current set</p>
+          <p>{dashboard?.song.sceneCount ?? "--"} scenes ready</p>
         </article>
         <article className="panel stat-card">
-          <span className="stat-card__label">Scenes</span>
-          <strong>{dashboard?.song.sceneCount ?? "--"}</strong>
-          <p>Quick visual overview for session planning</p>
+          <span className="stat-card__label">Selected Track</span>
+          <strong>{selected?.track?.name || "No track"}</strong>
+          <p>
+            Slot {selectedSlot?.index ?? "--"}
+            {selectedSlot?.clip ? ` • ${selectedSlot.clip.name}` : " • Empty"}
+          </p>
         </article>
       </section>
 
-      <section className="content-grid">
-        <aside className="panel track-list-panel">
-          <div className="panel__header">
-            <h2>Tracks</h2>
-            <p>Select a track to inspect devices and clip slots.</p>
-          </div>
+      <div className="view-tabs">
+        {VIEW_TABS.map((tab) => (
+          <button
+            className={`view-tab ${activeView === tab.id ? "view-tab--active" : ""}`}
+            key={tab.id}
+            onClick={() => setActiveView(tab.id)}
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          <div className="track-list">
-            {dashboard?.tracks.map((track) => (
-              <TrackButton
+      {activeView === "session" ? (
+        <section className="panel session-panel">
+          <div className="session-board">
+            {workspaceTracks.map((track) => (
+              <SessionTrackColumn
                 key={track.index}
                 track={track}
-                selected={track.index === selectedTrack}
-                onClick={() => {
+                isSelectedTrack={track.index === selectedTrack}
+                onSelectTrack={() => {
                   startTransition(() => setSelectedTrack(track.index));
                 }}
+                onSelectSlot={(slotIndex) => selectClipSlot(track.index, slotIndex)}
+                onAddClipRow={() => {
+                  addClipRow(track.index).catch((actionError) => {
+                    setError(
+                      actionError instanceof Error
+                        ? actionError.message
+                        : String(actionError),
+                    );
+                  });
+                }}
+                selectedSlotIndex={selectedSlotIndex}
               />
             ))}
+            <article className="session-add-track-column">
+              <button
+                className="session-add-track"
+                onClick={() => {
+                  addMidiTrack().catch((actionError) => {
+                    setError(
+                      actionError instanceof Error
+                        ? actionError.message
+                        : String(actionError),
+                    );
+                  });
+                }}
+                title="Add MIDI track"
+                type="button"
+              >
+                +
+              </button>
+            </article>
           </div>
-        </aside>
+        </section>
+      ) : (
+        <ArrangementView
+          tracks={workspaceTracks}
+          selectedTrackIndex={selectedTrack}
+          selectedSlotIndex={selectedSlotIndex}
+          onSelectSlot={selectClipSlot}
+        />
+      )}
 
-        <section className="panel detail-panel">
-          <div className="detail-panel__section">
-            <div className="device-grid">
-              {selected?.devices.map((device) => {
-                const deviceKey = `${selected.track.index}-${device.index}`;
-                const isExpanded = Boolean(expandedDevices[deviceKey]);
-
-                return (
-                  <article className="device-card" key={`${device.index}-${device.name}`}>
-                    <button
-                      className="device-card__toggle"
-                      onClick={() => toggleDevice(selected.track.index, device.index)}
-                      type="button"
-                    >
-                      <div className="device-card__topline">
-                        <span>
-                          {device.index}.{" "}
-                          {device.currentPresetName
-                            ? `${device.name} - ${device.currentPresetName}`
-                            : device.name}
-                        </span>
-                        <StatusPill active={device.isActive}>{device.className}</StatusPill>
-                      </div>
-
-                      <div className="device-card__summary">
-                        <p className="device-card__meta">
-                          {device.type} {device.canHaveDrumPads ? "| drum rack capable" : ""}
-                        </p>
-                        {device.currentPresetName ? (
-                          <p className="device-card__meta">
-                            Preset: {device.currentPresetName}
-                          </p>
-                        ) : null}
-                        <span className="device-card__chevron">
-                          {isExpanded ? "Hide" : `Show ${Math.min(device.parameters.length, 8)} params`}
-                        </span>
-                      </div>
-                    </button>
-
-                    {isExpanded ? (
-                      <div className="parameter-list">
-                        {device.parameters.slice(0, 8).map((parameter) => (
-                          <ParameterMeter
-                            key={`${device.index}-${parameter.index}`}
-                            parameter={parameter}
-                          />
-                        ))}
-                      </div>
+      <section className="content-grid">
+        <section className="workspace-column">
+          <section className="panel detail-panel">
+            <div className="detail-panel__section detail-panel__section--selected">
+              <div className="selected-clip-panel">
+                <div className="selected-clip-panel__header">
+                  <div>
+                    <span className="field-label">Selected Clip</span>
+                    <strong>
+                      {selected?.track?.name
+                        ? `${selected.track.name} • Slot ${selectedSlot?.index ?? "--"}`
+                        : "No track selected"}
+                    </strong>
+                  </div>
+                </div>
+                {selectedSlot ? (
+                  <>
+                    <p>
+                      {selectedSlot.clip
+                        ? `${selectedSlot.clip.name} • ${selectedSlot.clip.noteCount} notes • ${selectedSlot.clip.length} beats`
+                        : "Empty slot"}
+                    </p>
+                    {selectedSlot.clip ? (
+                      <p>
+                        Pitches: {selectedSlot.clip.uniquePitches.join(", ") || "none"}
+                      </p>
                     ) : null}
-                  </article>
-                );
-              })}
+                  </>
+                ) : (
+                  <p>No slot selected.</p>
+                )}
+              </div>
             </div>
-          </div>
-
-          <div className="detail-panel__section">
-            <h3>Clip Slots</h3>
-            <div className="slots-grid">
-              {selected?.clipSlots.map((slot) => (
-                <ClipSlotCard
-                  key={slot.index}
-                  slot={slot}
-                  selected={slot.index === selectedSlotIndex}
-                  onSelect={() => setSelectedSlotIndex(slot.index)}
-                />
-              ))}
-            </div>
-          </div>
+          </section>
         </section>
 
         <aside className="panel command-panel">
@@ -505,7 +680,7 @@ export function App() {
                             className="slot-input"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                          onChange={(event) =>
+                            onChange={(event) =>
                               updateReferenceRow(reference.id, "slot", event.target.value)
                             }
                             type="text"
