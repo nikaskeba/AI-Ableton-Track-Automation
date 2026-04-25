@@ -234,6 +234,192 @@ function ArrangementView({ tracks = [], selectedTrackIndex, selectedSlotIndex, o
   );
 }
 
+function formatParameterValue(value) {
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+
+  return Math.abs(value) >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+
+function getParameterPercent(parameter, value) {
+  const min = Number(parameter.min);
+  const max = Number(parameter.max);
+  const current = Number(value);
+  const range = max - min || 1;
+
+  if (!Number.isFinite(current) || !Number.isFinite(range)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, ((current - min) / range) * 100));
+}
+
+function ParameterKnob({ device, parameter, onCommit }) {
+  const [draftValue, setDraftValue] = useState(Number(parameter.value));
+
+  useEffect(() => {
+    setDraftValue(Number(parameter.value));
+  }, [parameter.value]);
+
+  const min = Number(parameter.min);
+  const max = Number(parameter.max);
+  const step = parameter.isQuantized ? 1 : Math.max((max - min) / 100, 0.001);
+  const percent = getParameterPercent(parameter, draftValue);
+
+  function commitValue() {
+    if (Number.isFinite(draftValue)) {
+      onCommit(device.index, parameter.index, draftValue);
+    }
+  }
+
+  return (
+    <div className="parameter-knob">
+      <div
+        aria-hidden="true"
+        className="parameter-knob__dial"
+        style={{ "--knob-percent": `${percent}%` }}
+      >
+        <span />
+      </div>
+      <div className="parameter-knob__body">
+        <div className="parameter-knob__topline">
+          <span title={parameter.name}>{parameter.name}</span>
+          <strong>{formatParameterValue(draftValue)}</strong>
+        </div>
+        <input
+          aria-label={`${device.name} ${parameter.name}`}
+          className="parameter-knob__range"
+          max={max}
+          min={min}
+          onBlur={commitValue}
+          onChange={(event) => setDraftValue(Number(event.target.value))}
+          onKeyUp={(event) => {
+            if (event.key === "Enter") {
+              commitValue();
+            }
+          }}
+          onPointerUp={commitValue}
+          step={step}
+          type="range"
+          value={Number.isFinite(draftValue) ? draftValue : min}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DeviceControls({ selected, onSetParameter }) {
+  const devices = selected?.devices?.filter((device) => device.parameters?.length) ?? [];
+
+  return (
+    <section className="panel device-control-panel">
+      <div className="device-control-panel__header">
+        <div>
+          <span className="field-label">Device Controls</span>
+          <strong>{selected?.track?.name || "No track selected"}</strong>
+        </div>
+        <p>Showing the first exposed controls for each device on the selected track.</p>
+      </div>
+
+      {devices.length ? (
+        <div className="device-control-stack">
+          {devices.map((device) => (
+            <article className="device-control-card" key={`${device.index}-${device.name}`}>
+              <div className="device-control-card__header">
+                <div>
+                  <strong>
+                    {device.index}. {device.currentPresetName ? `${device.name} - ${device.currentPresetName}` : device.name}
+                  </strong>
+                  <p>
+                    {device.className} {device.type ? `| ${device.type}` : ""}
+                  </p>
+                </div>
+                <StatusPill active={device.isActive}>Device On</StatusPill>
+              </div>
+              <div className="parameter-knob-grid">
+                {device.parameters.map((parameter) => (
+                  <ParameterKnob
+                    device={device}
+                    key={`${device.index}-${parameter.index}`}
+                    onCommit={onSetParameter}
+                    parameter={parameter}
+                  />
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="device-control-panel__empty">
+          No exposed device parameters found on this track yet.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function MidiNotePreview({ clip }) {
+  const notes = Array.isArray(clip?.notes) ? clip.notes : [];
+  const length = Number(clip?.length || 4);
+  const pitches = [...new Set(notes.map((note) => note.pitch))]
+    .filter((pitch) => Number.isFinite(pitch))
+    .sort((a, b) => b - a);
+  const beatMarkers = Array.from({ length: Math.max(1, Math.ceil(length)) }, (_, index) => index + 1);
+
+  if (!notes.length || !pitches.length) {
+    return (
+      <div className="midi-preview midi-preview--empty">
+        No MIDI notes to display.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="midi-preview"
+      style={{ "--beat-count": beatMarkers.length }}
+    >
+      <div className="midi-preview__ruler">
+        <span />
+        <div>
+          {beatMarkers.map((beat) => (
+            <span key={beat}>{beat}</span>
+          ))}
+        </div>
+      </div>
+      <div className="midi-preview__grid">
+        {pitches.map((pitch) => (
+          <div className="midi-preview__row" key={pitch}>
+            <span className="midi-preview__pitch">{pitch}</span>
+            <div className="midi-preview__lane">
+              {notes
+                .filter((note) => note.pitch === pitch)
+                .map((note, noteIndex) => {
+                  const left = Math.max(0, Math.min(100, (note.time / length) * 100));
+                  const width = Math.max(1.8, Math.min(100 - left, (note.duration / length) * 100));
+
+                  return (
+                    <span
+                      className="midi-preview__note"
+                      key={`${pitch}-${note.time}-${noteIndex}`}
+                      style={{
+                        left: `${left}%`,
+                        width: `${width}%`,
+                        opacity: Math.max(0.45, Math.min(1, (note.velocity || 90) / 127)),
+                      }}
+                      title={`Pitch ${pitch} | beat ${formatParameterValue(note.time)} | duration ${formatParameterValue(note.duration)}`}
+                    />
+                  );
+                })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState(null);
   const [selectedTrack, setSelectedTrack] = useState(1);
@@ -310,6 +496,26 @@ export function App() {
       setDashboard(data);
       setSelectedTrack(data.selectedTrack.track.index);
       setSelectedSlotIndex(data.selectedTrack.clipSlots?.at(-1)?.index ?? null);
+    });
+  });
+
+  const setDeviceParameter = useEffectEvent(async (deviceIndex, parameterIndex, value) => {
+    setError("");
+    const data = await fetchJson("/api/device-parameter", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        trackIndex: selectedTrack,
+        deviceIndex,
+        parameterIndex,
+        value,
+      }),
+    });
+
+    startTransition(() => {
+      setDashboard(data);
     });
   });
 
@@ -613,9 +819,12 @@ export function App() {
                         : "Empty slot"}
                     </p>
                     {selectedSlot.clip ? (
-                      <p>
-                        Pitches: {selectedSlot.clip.uniquePitches.join(", ") || "none"}
-                      </p>
+                      <>
+                        <p>
+                          Pitches: {selectedSlot.clip.uniquePitches.join(", ") || "none"}
+                        </p>
+                        <MidiNotePreview clip={selectedSlot.clip} />
+                      </>
                     ) : null}
                   </>
                 ) : (
@@ -624,6 +833,19 @@ export function App() {
               </div>
             </div>
           </section>
+
+          <DeviceControls
+            selected={selected}
+            onSetParameter={(deviceIndex, parameterIndex, value) => {
+              setDeviceParameter(deviceIndex, parameterIndex, value).catch((actionError) => {
+                setError(
+                  actionError instanceof Error
+                    ? actionError.message
+                    : String(actionError),
+                );
+              });
+            }}
+          />
         </section>
 
         <aside className="panel command-panel">

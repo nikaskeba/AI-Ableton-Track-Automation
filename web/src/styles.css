@@ -649,6 +649,134 @@ button {
   background: linear-gradient(90deg, var(--accent-deep), var(--accent));
 }
 
+.device-control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.device-control-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 18px;
+}
+
+.device-control-panel__header strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.1rem;
+}
+
+.device-control-panel__header p,
+.device-control-panel__empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.device-control-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.device-control-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(18, 18, 18, 0.76);
+}
+
+.device-control-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.device-control-card__header strong {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.device-control-card__header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.parameter-knob-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.parameter-knob {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(34, 34, 34, 0.76);
+}
+
+.parameter-knob__dial {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, #171717 0 48%, transparent 50%),
+    conic-gradient(var(--accent-deep) var(--knob-percent), rgba(255, 255, 255, 0.12) 0);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.parameter-knob__dial span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 -16px 0 var(--text);
+}
+
+.parameter-knob__body {
+  min-width: 0;
+}
+
+.parameter-knob__topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.parameter-knob__topline span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameter-knob__topline strong {
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+}
+
+.parameter-knob__range {
+  width: 100%;
+  accent-color: var(--accent-deep);
+}
+
 .command-panel {
   display: flex;
   flex-direction: column;
@@ -785,6 +913,86 @@ button {
   font-size: 0.95rem;
 }
 
+.midi-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    rgba(12, 12, 12, 0.72);
+  background-size: 100% 24px;
+  overflow-x: auto;
+}
+
+.midi-preview--empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.midi-preview__ruler {
+  display: grid;
+  grid-template-columns: 44px minmax(360px, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.midi-preview__ruler > div {
+  display: grid;
+  grid-template-columns: repeat(var(--beat-count, 4), 1fr);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.midi-preview__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 420px;
+}
+
+.midi-preview__row {
+  display: grid;
+  grid-template-columns: 44px minmax(360px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.midi-preview__pitch {
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.midi-preview__lane {
+  position: relative;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.07) 0,
+      rgba(255, 255, 255, 0.07) 1px,
+      transparent 1px,
+      transparent 25%
+    ),
+    rgba(24, 24, 24, 0.9);
+}
+
+.midi-preview__note {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #9ed0ff, #5b9eff);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 4px 10px rgba(91, 158, 255, 0.22);
+}
+
 .selected-slot-card strong {
   display: block;
   margin-top: 8px;
@@ -801,6 +1009,12 @@ button {
   color: #090909;
   border-color: rgba(255, 255, 255, 0.9);
   font-weight: 800;
+}
+
+.command-panel__llm-button:hover {
+  background: linear-gradient(180deg, #303030, #1f1f1f);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 .panel-note {

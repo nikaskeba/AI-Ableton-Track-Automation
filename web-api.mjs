@@ -166,6 +166,12 @@ async function summarizeClip(clip) {
     length,
     looping,
     noteCount: notes.length,
+    notes: notes.slice(0, 256).map((note) => ({
+      pitch: note.pitch,
+      time: note.time,
+      duration: note.duration,
+      velocity: note.velocity,
+    })),
     uniquePitches,
     lowestPitch: uniquePitches.length ? uniquePitches[0] : null,
     highestPitch: uniquePitches.length ? uniquePitches[uniquePitches.length - 1] : null,
@@ -254,12 +260,16 @@ async function summarizeTrack(track, index) {
           : null;
 
       const parameterSummaries = await Promise.all(
-        parameters.slice(0, 16).map(async (parameter, parameterIndex) => {
-          const [min, max] = await Promise.all([parameter.get("min"), parameter.get("max")]);
+        parameters.slice(0, 24).map(async (parameter, parameterIndex) => {
+          const [value, min, max] = await Promise.all([
+            parameter.get("value").catch(() => parameter.raw.value),
+            parameter.get("min"),
+            parameter.get("max"),
+          ]);
           return {
             index: parameterIndex + 1,
             name: parameter.raw.name,
-            value: parameter.raw.value,
+            value,
             min,
             max,
             isQuantized: parameter.raw.is_quantized,
@@ -470,6 +480,38 @@ async function createMidiTrackAndDashboard() {
 async function createSceneAndDashboard(trackIndex) {
   return withAbleton(async (ableton) => {
     await ableton.song.createScene(-1);
+    const dashboard = await buildDashboardFromAbleton(ableton, trackIndex);
+    const { _tracks, ...publicDashboard } = dashboard;
+
+    return publicDashboard;
+  });
+}
+
+async function setDeviceParameterAndDashboard(trackIndex, deviceIndex, parameterIndex, value) {
+  return withAbleton(async (ableton) => {
+    const track = await getTrackByIndex(ableton, trackIndex);
+    const devices = await track.get("devices");
+    const device = devices[deviceIndex - 1];
+
+    if (!device) {
+      throw new Error(
+        `Device ${deviceIndex} does not exist on track "${track.raw.name}". Found ${devices.length} devices.`,
+      );
+    }
+
+    const parameters = await device.get("parameters");
+    const parameter = parameters[parameterIndex - 1];
+
+    if (!parameter) {
+      throw new Error(
+        `Parameter ${parameterIndex} does not exist on device "${device.raw.name}". Found ${parameters.length} parameters.`,
+      );
+    }
+
+    const [min, max] = await Promise.all([parameter.get("min"), parameter.get("max")]);
+    const boundedValue = Math.max(min, Math.min(max, value));
+    await parameter.set("value", boundedValue);
+
     const dashboard = await buildDashboardFromAbleton(ableton, trackIndex);
     const { _tracks, ...publicDashboard } = dashboard;
 
@@ -1009,6 +1051,35 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const trackIndex = Number(body.trackIndex || 1);
       const payload = await enqueue(() => createSceneAndDashboard(trackIndex));
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/device-parameter") {
+      const body = await readJsonBody(req);
+      const trackIndex = Number(body.trackIndex || 0);
+      const deviceIndex = Number(body.deviceIndex || 0);
+      const parameterIndex = Number(body.parameterIndex || 0);
+      const value = Number(body.value);
+
+      if (
+        !Number.isInteger(trackIndex) ||
+        trackIndex <= 0 ||
+        !Number.isInteger(deviceIndex) ||
+        deviceIndex <= 0 ||
+        !Number.isInteger(parameterIndex) ||
+        parameterIndex <= 0 ||
+        !Number.isFinite(value)
+      ) {
+        sendJson(res, 400, {
+          error: "trackIndex, deviceIndex, parameterIndex, and numeric value are required.",
+        });
+        return;
+      }
+
+      const payload = await enqueue(() =>
+        setDeviceParameterAndDashboard(trackIndex, deviceIndex, parameterIndex, value),
+      );
       sendJson(res, 200, payload);
       return;
     }
