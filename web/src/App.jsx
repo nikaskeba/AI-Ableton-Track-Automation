@@ -100,6 +100,9 @@ function SessionTrackColumn({
 }) {
   const palette = getTrackPalette(track.index);
   const visibleSlots = getVisibleClipSlots(track.clipSlots, richClipSlots);
+  const deviceLabel = track.displayName && track.displayName !== track.name
+    ? track.displayName
+    : track.primaryDeviceName;
 
   return (
     <article
@@ -115,9 +118,10 @@ function SessionTrackColumn({
         onClick={onSelectTrack}
         type="button"
       >
-        <span className="session-track__title">
-          {track.displayName || track.primaryDeviceName || track.name}
-        </span>
+        <span className="session-track__title">{track.name}</span>
+        {deviceLabel ? (
+          <span className="session-track__subtitle">{deviceLabel}</span>
+        ) : null}
       </button>
 
       <div className="session-track__slots">
@@ -147,6 +151,58 @@ function SessionTrackColumn({
           className="session-add-clip"
           onClick={onAddClipRow}
           title={`Add clip row for ${track.displayName || track.name}`}
+          type="button"
+        >
+          +
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function getVisibleScenes(scenes = [], rowCount = VISIBLE_CLIP_ROWS) {
+  const scenesByIndex = new Map(scenes.map((scene) => [scene.index, scene]));
+  const visibleCount = Math.max(
+    VISIBLE_CLIP_ROWS,
+    rowCount,
+    ...Array.from(scenesByIndex.keys(), (sceneIndex) => Number(sceneIndex) || 0),
+  );
+
+  return Array.from({ length: visibleCount }, (_, index) => {
+    const sceneIndex = index + 1;
+    return (
+      scenesByIndex.get(sceneIndex) || {
+        index: sceneIndex,
+        name: `Scene ${sceneIndex}`,
+        isTriggered: false,
+        isEmpty: true,
+      }
+    );
+  });
+}
+
+function SessionSceneColumn({ onAddScene, rowCount, scenes = [], selectedSlotIndex }) {
+  const visibleScenes = getVisibleScenes(scenes, rowCount);
+
+  return (
+    <article className="session-scenes">
+      <div className="session-scenes__header">Scenes</div>
+      <div className="session-scenes__slots">
+        {visibleScenes.map((scene) => (
+          <button
+            className={`session-scene ${
+              selectedSlotIndex === scene.index ? "session-scene--selected" : ""
+            } ${scene.isTriggered ? "session-scene--triggered" : ""}`}
+            key={scene.index}
+            type="button"
+          >
+            <span>{scene.name || `Scene ${scene.index}`}</span>
+          </button>
+        ))}
+        <button
+          className="session-add-scene"
+          onClick={onAddScene}
+          title="Add scene"
           type="button"
         >
           +
@@ -204,7 +260,7 @@ function ArrangementView({ tracks = [], selectedTrackIndex, selectedSlotIndex, o
                 onClick={() => onSelectSlot(track.index, selectedSlotIndex || 1)}
                 type="button"
               >
-                {track.displayName || track.primaryDeviceName || track.name}
+                {track.name}
               </button>
               {timelineRows.map((slotIndex) => {
                 const slot = visibleSlots.find((item) => item.index === slotIndex);
@@ -447,21 +503,48 @@ function MidiNotePreview({ clip, isTargeted, onSelect }) {
   );
 }
 
+function getTemplateTargetLabel(target) {
+  const role =
+    target?.mode === "drum"
+      ? "drums"
+      : target?.instrument?.name || target?.trackName || "clip";
+  const preset = target?.instrument?.currentPresetName
+    ? ` • ${target.instrument.currentPresetName}`
+    : "";
+
+  return `${role}${preset}: ${target?.clipName || "unnamed clip"}`;
+}
+
 function TemplateBuilder({
-  isRunning,
-  onRun,
+  isRunningStepOne,
+  isRunningStepTwo,
+  isRunningReferenceAnchor,
+  isGeneratingTemplateParts,
+  templateGenerationStatus,
+  onRunStepOne,
+  onRunStepTwo,
+  onRunReferenceAnchor,
+  onRunTemplateParts,
+  referenceAnchorResult,
+  templatePartsResult,
+  foundationPlan,
   plan,
   prompt,
   setPrompt,
 }) {
+  const canRunStepTwo = Boolean(prompt.trim());
+  const canRunReferenceAnchor = Boolean(prompt.trim());
+
   return (
     <section className="panel template-builder">
       <div className="template-builder__header">
         <div>
           <span className="field-label">Template Builder</span>
-          <strong>Step 1: Style, BPM, and track names</strong>
+          <strong>Template foundation workflow</strong>
         </div>
-        <StatusPill active={Boolean(plan)}>Step 1</StatusPill>
+        <StatusPill active={Boolean(referenceAnchorResult || foundationPlan)}>
+          {referenceAnchorResult ? "Step 3" : foundationPlan ? "Step 2" : plan ? "Step 1" : "Ready"}
+        </StatusPill>
       </div>
 
       <div className="template-builder__body">
@@ -475,36 +558,89 @@ function TemplateBuilder({
             value={prompt}
           />
         </label>
-        <button
-          className="secondary-button template-builder__run"
-          disabled={isRunning || !prompt.trim()}
-          onClick={onRun}
-          type="button"
-        >
-          {isRunning ? "Creating Template..." : "Run Step 1 Setup"}
-        </button>
+        <div className="template-builder__actions">
+          <button
+            className="secondary-button template-builder__run"
+            disabled={isRunningStepOne || !prompt.trim()}
+            onClick={onRunStepOne}
+            type="button"
+          >
+            {isRunningStepOne ? "Creating Tracks..." : "Run Step 1 Setup"}
+          </button>
+          <button
+            className="primary-button template-builder__run"
+            disabled={isRunningStepTwo || !canRunStepTwo}
+            onClick={onRunStepTwo}
+            type="button"
+          >
+            {isRunningStepTwo ? "Naming Scenes..." : "Run Step 2 Foundation"}
+          </button>
+          <button
+            className="primary-button template-builder__run"
+            disabled={isRunningReferenceAnchor || !canRunReferenceAnchor}
+            onClick={onRunReferenceAnchor}
+            type="button"
+          >
+            {isRunningReferenceAnchor ? "Writing Anchor..." : "Run Step 3 Reference Anchor"}
+          </button>
+          <button
+            className="primary-button template-builder__run"
+            disabled={isGeneratingTemplateParts || !canRunReferenceAnchor}
+            onClick={onRunTemplateParts}
+            type="button"
+          >
+            {isGeneratingTemplateParts ? "Generating Parts..." : "Run Step 4 Remaining Clips"}
+          </button>
+        </div>
       </div>
 
       <div className="template-builder__steps">
-        <div className="template-step template-step--active">
+        <div className={`template-step ${plan ? "template-step--complete" : "template-step--active"}`}>
           <span>1</span>
           <div>
             <strong>Create skeleton</strong>
             <p>Set tempo and create/rename tracks.</p>
           </div>
         </div>
-        <div className="template-step">
+        <div
+          className={`template-step ${
+            foundationPlan ? "template-step--complete" : plan ? "template-step--active" : ""
+          }`}
+        >
           <span>2</span>
           <div>
-            <strong>Select sounds manually</strong>
-            <p>Choose instruments, VST presets, and racks for each track.</p>
+            <strong>Name foundation</strong>
+            <p>Create scene names and placeholder clip names.</p>
           </div>
         </div>
-        <div className="template-step">
+        <div
+          className={`template-step ${
+            referenceAnchorResult
+              ? "template-step--complete"
+              : foundationPlan || plan
+                ? "template-step--active"
+                : ""
+          }`}
+        >
           <span>3</span>
           <div>
-            <strong>Generate musical parts</strong>
-            <p>Use the AI workflow track by track after sounds are loaded.</p>
+            <strong>Create reference anchor</strong>
+            <p>Generate the first harmonic MIDI reference only.</p>
+          </div>
+        </div>
+        <div
+          className={`template-step ${
+            templatePartsResult
+              ? "template-step--complete"
+              : referenceAnchorResult
+                ? "template-step--active"
+                : ""
+          }`}
+        >
+          <span>4</span>
+          <div>
+            <strong>Generate reference scene</strong>
+            <p>Fill only Scene 1 clips from the anchor.</p>
           </div>
         </div>
       </div>
@@ -526,6 +662,29 @@ function TemplateBuilder({
           <p>{plan.nextStep || "Select sounds manually for each track."}</p>
         </div>
       ) : null}
+
+      {foundationPlan ? (
+        <p className="template-builder__compact-status">
+          Foundation added: {foundationPlan.scenes?.length ?? 0} scenes prepared.
+        </p>
+      ) : null}
+      {referenceAnchorResult ? (
+        <p className="template-builder__compact-status">
+          Reference anchor added: Track {referenceAnchorResult.reference?.trackIndex ?? 1} / Slot{" "}
+          {referenceAnchorResult.reference?.slotIndex ?? 1}.
+        </p>
+      ) : null}
+      {templatePartsResult ? (
+        <p className="template-builder__compact-status">
+          Remaining clips: {templatePartsResult.generatedCount ?? 0} /{" "}
+          {templatePartsResult.targetCount ?? 0} generated.
+        </p>
+      ) : null}
+      {templateGenerationStatus ? (
+        <p className="template-builder__compact-status template-builder__compact-status--live">
+          {templateGenerationStatus}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -545,7 +704,14 @@ export function App() {
   const [llmExecutionState, setLlmExecutionState] = useState(null);
   const [templatePrompt, setTemplatePrompt] = useState(DEFAULT_TEMPLATE_PROMPT);
   const [templatePlan, setTemplatePlan] = useState(null);
+  const [foundationPlan, setFoundationPlan] = useState(null);
+  const [referenceAnchorResult, setReferenceAnchorResult] = useState(null);
+  const [templatePartsResult, setTemplatePartsResult] = useState(null);
+  const [templateGenerationStatus, setTemplateGenerationStatus] = useState("");
   const [isRunningTemplate, setIsRunningTemplate] = useState(false);
+  const [isRunningFoundation, setIsRunningFoundation] = useState(false);
+  const [isRunningReferenceAnchor, setIsRunningReferenceAnchor] = useState(false);
+  const [isGeneratingTemplateParts, setIsGeneratingTemplateParts] = useState(false);
   const [commandDraft, setCommandDraft] = useState(
     "Create a MIDI idea that fits the selected track and instrument.",
   );
@@ -651,6 +817,9 @@ export function App() {
 
       startTransition(() => {
         setTemplatePlan(result.plan);
+        setFoundationPlan(null);
+        setReferenceAnchorResult(null);
+        setTemplatePartsResult(null);
         setDashboard(result.dashboard);
         setSelectedTrack(1);
         setSelectedSlotIndex(result.dashboard?.selectedTrack?.clipSlots?.[0]?.index ?? null);
@@ -658,6 +827,260 @@ export function App() {
       setActionMessage(result.message);
     } finally {
       setIsRunningTemplate(false);
+    }
+  });
+
+  const runTemplateStepTwo = useEffectEvent(async () => {
+    setIsRunningFoundation(true);
+    setError("");
+    setActionMessage("");
+
+    try {
+      const result = await fetchJson("/api/template/step-two", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: templatePrompt,
+          style: templatePlan?.style || templatePrompt,
+          bpm: templatePlan?.bpm || dashboard?.song?.tempo,
+          tracks:
+            templatePlan?.tracks ||
+            dashboard?.tracks?.map((track) => ({
+              index: track.index,
+              name: track.name,
+              displayName: track.displayName,
+            })),
+        }),
+      });
+
+      startTransition(() => {
+        setFoundationPlan(result.plan);
+        setReferenceAnchorResult(null);
+        setTemplatePartsResult(null);
+        setDashboard(result.dashboard);
+        setSelectedTrack(1);
+        setSelectedSlotIndex(result.plan?.reference?.slotIndex ?? 1);
+      });
+      setReferenceRows((current) => {
+        const referenceTrack = Number(result.plan?.reference?.trackIndex || 1);
+        const referenceSlot = Number(result.plan?.reference?.slotIndex || 1);
+        const alreadyExists = current.some(
+          (reference) =>
+            Number(reference.track) === referenceTrack &&
+            Number(reference.slot) === referenceSlot,
+        );
+
+        if (alreadyExists) {
+          return current;
+        }
+
+        referenceRowIdRef.current += 1;
+        return [
+          ...current,
+          {
+            id: referenceRowIdRef.current,
+            track: String(referenceTrack),
+            slot: String(referenceSlot),
+          },
+        ];
+      });
+
+      setActionMessage(
+        result.skipped?.length
+          ? `${result.message} ${result.skipped.length} slots were skipped.`
+          : result.message,
+      );
+    } finally {
+      setIsRunningFoundation(false);
+    }
+  });
+
+  const runTemplateReferenceAnchor = useEffectEvent(async () => {
+    const fallbackReference = referenceRows[0]
+      ? {
+          trackIndex: Number(referenceRows[0].track || 1),
+          slotIndex: Number(referenceRows[0].slot || 1),
+        }
+      : null;
+    const reference = foundationPlan?.reference || fallbackReference || {
+      trackIndex: 1,
+      slotIndex: 1,
+      clipName: "pad_warm_intro_reference",
+    };
+
+    setIsRunningReferenceAnchor(true);
+    setError("");
+    setActionMessage("Writing the reference anchor into Track 1 / Slot 1...");
+
+    try {
+      const result = await fetchJson("/api/template/reference-anchor", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: templatePrompt,
+          style: templatePlan?.style || foundationPlan?.style || templatePrompt,
+          bpm: templatePlan?.bpm || foundationPlan?.bpm || dashboard?.song?.tempo,
+          reference,
+          anchorPriority: ["harmonic", "melodic", "bass", "rhythmic", "texture"],
+        }),
+      });
+
+      startTransition(() => {
+        setReferenceAnchorResult({
+          reference: result.reference,
+          anchorPriority: result.anchorPriority,
+        });
+        setTemplatePartsResult(null);
+        setDashboard(result.dashboard);
+        setSelectedTrack(result.reference?.trackIndex ?? 1);
+        setSelectedSlotIndex(result.reference?.slotIndex ?? 1);
+      });
+      setLlmResponse(result.message || "");
+      setLlmModel(result.model || "");
+      setLlmExecutionState(result.execution || null);
+      if (result.execution?.ok) {
+        setActionMessage(result.execution.message || "Reference anchor created.");
+      } else {
+        setActionMessage("");
+        setError(result.execution?.error || "Reference anchor could not be applied.");
+      }
+    } finally {
+      setIsRunningReferenceAnchor(false);
+    }
+  });
+
+  const runTemplatePartsFromReference = useEffectEvent(async () => {
+    const fallbackReference =
+      referenceAnchorResult?.reference ||
+      foundationPlan?.reference ||
+      (referenceRows[0]
+        ? {
+            trackIndex: Number(referenceRows[0].track || 1),
+            slotIndex: Number(referenceRows[0].slot || 1),
+          }
+        : {
+            trackIndex: 1,
+            slotIndex: 1,
+            clipName: "pad_warm_intro_reference",
+          });
+
+    setIsGeneratingTemplateParts(true);
+    setError("");
+    setTemplateGenerationStatus("Finding empty clips in the reference scene...");
+    setActionMessage("Finding empty clips in the reference scene...");
+
+    try {
+      const targetPayload = await fetchJson("/api/template/part-targets", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reference: fallbackReference,
+          overwrite: false,
+          onlyReferenceScene: true,
+        }),
+      });
+      const targets = targetPayload.targets || [];
+      const reference = {
+        trackIndex: targetPayload.reference?.track?.index || fallbackReference.trackIndex || 1,
+        slotIndex: targetPayload.reference?.slot?.index || fallbackReference.slotIndex || 1,
+        clipName: targetPayload.reference?.clip?.name || fallbackReference.clipName,
+      };
+      const results = [];
+      let latestDashboard = dashboard;
+
+      if (!targets.length) {
+        const emptyResult = {
+          ok: true,
+          step: 4,
+          message: "No empty reference scene clips need generation.",
+          reference,
+          generatedCount: 0,
+          targetCount: 0,
+          results,
+          dashboard,
+        };
+        setTemplatePartsResult(emptyResult);
+        setTemplateGenerationStatus("No empty reference scene clips need generation.");
+        setActionMessage(emptyResult.message);
+        return;
+      }
+
+      for (const [index, target] of targets.entries()) {
+        const label = getTemplateTargetLabel(target);
+        const progress = `Generating ${label} (${index + 1}/${targets.length})`;
+        setTemplateGenerationStatus(progress);
+        setActionMessage(progress);
+        startTransition(() => {
+          setSelectedTrack(target.trackIndex);
+          setSelectedSlotIndex(target.slotIndex);
+        });
+
+        const generated = await fetchJson("/api/template/generate-part", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: templatePrompt,
+            style: templatePlan?.style || foundationPlan?.style || templatePrompt,
+            bpm: templatePlan?.bpm || foundationPlan?.bpm || dashboard?.song?.tempo,
+            reference,
+            target,
+            anchorPriority: ["harmonic", "melodic", "bass", "rhythmic", "texture"],
+          }),
+        });
+
+        results.push(generated.result);
+        latestDashboard = generated.dashboard || latestDashboard;
+        startTransition(() => {
+          setDashboard(latestDashboard);
+        });
+      }
+
+      const generatedCount = results.filter((item) => item.ok).length;
+      const result = {
+        ok: results.every((item) => item.ok),
+        step: 4,
+        message: `Generated ${generatedCount} of ${targets.length} reference scene clips from the reference anchor.`,
+        reference,
+        generatedCount,
+        targetCount: targets.length,
+        results,
+        dashboard: latestDashboard,
+      };
+
+      startTransition(() => {
+        setTemplatePartsResult(result);
+        setDashboard(latestDashboard);
+        setSelectedTrack(result.reference?.trackIndex ?? 1);
+        setSelectedSlotIndex(result.reference?.slotIndex ?? 1);
+      });
+
+      if (result.generatedCount === result.targetCount) {
+        setActionMessage(result.message);
+      } else {
+        const failedCount = (result.results || []).filter((item) => !item.ok).length;
+        setActionMessage(
+          `${result.message}${failedCount ? ` ${failedCount} clips need review.` : ""}`,
+        );
+      }
+      setLlmResponse(JSON.stringify(result.results || [], null, 2));
+      setLlmModel("template-loop");
+      setLlmExecutionState({
+        ok: result.ok,
+        message: result.message,
+        generatedCount: result.generatedCount,
+        targetCount: result.targetCount,
+      });
+    } finally {
+      setIsGeneratingTemplateParts(false);
+      setTemplateGenerationStatus("");
     }
   });
 
@@ -833,6 +1256,13 @@ export function App() {
           }
         : track,
     ) ?? [];
+  const sessionRowCount = Math.max(
+    VISIBLE_CLIP_ROWS,
+    ...(workspaceTracks.flatMap((track) =>
+      getVisibleClipSlots(track.clipSlots).map((slot) => slot.index),
+    )),
+    ...((dashboard?.scenes ?? []).map((scene) => scene.index)),
+  );
 
   function selectClipSlot(trackIndex, slotIndex) {
     startTransition(() => {
@@ -890,9 +1320,40 @@ export function App() {
       {error ? <div className="error-banner">{error}</div> : null}
 
       <TemplateBuilder
-        isRunning={isRunningTemplate}
-        onRun={() => {
+        foundationPlan={foundationPlan}
+        isGeneratingTemplateParts={isGeneratingTemplateParts}
+        isRunningReferenceAnchor={isRunningReferenceAnchor}
+        isRunningStepOne={isRunningTemplate}
+        isRunningStepTwo={isRunningFoundation}
+        onRunTemplateParts={() => {
+          runTemplatePartsFromReference().catch((templateError) => {
+            setError(
+              templateError instanceof Error
+                ? templateError.message
+                : String(templateError),
+            );
+          });
+        }}
+        onRunStepOne={() => {
           runTemplateStepOne().catch((templateError) => {
+            setError(
+              templateError instanceof Error
+                ? templateError.message
+                : String(templateError),
+            );
+          });
+        }}
+        onRunReferenceAnchor={() => {
+          runTemplateReferenceAnchor().catch((templateError) => {
+            setError(
+              templateError instanceof Error
+                ? templateError.message
+                : String(templateError),
+            );
+          });
+        }}
+        onRunStepTwo={() => {
+          runTemplateStepTwo().catch((templateError) => {
             setError(
               templateError instanceof Error
                 ? templateError.message
@@ -902,7 +1363,10 @@ export function App() {
         }}
         plan={templatePlan}
         prompt={templatePrompt}
+        referenceAnchorResult={referenceAnchorResult}
         setPrompt={setTemplatePrompt}
+        templateGenerationStatus={templateGenerationStatus}
+        templatePartsResult={templatePartsResult}
       />
 
       <section className="stats-grid">
@@ -981,6 +1445,20 @@ export function App() {
                 +
               </button>
             </article>
+            <SessionSceneColumn
+              onAddScene={() => {
+                addClipRow(selectedTrack).catch((actionError) => {
+                  setError(
+                    actionError instanceof Error
+                      ? actionError.message
+                      : String(actionError),
+                  );
+                });
+              }}
+              rowCount={sessionRowCount}
+              scenes={dashboard?.scenes}
+              selectedSlotIndex={selectedSlotIndex}
+            />
           </div>
         </section>
       ) : (

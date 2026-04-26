@@ -649,6 +649,817 @@ async function applyTemplateStepOne(prompt) {
   });
 }
 
+function normalizeRoleName(value, fallbackRole = "track") {
+  const normalized = String(value || fallbackRole)
+    .trim()
+    .toLowerCase()
+    .replace(/^[0-9]+[\s.-]+/, "")
+    .replace(/:.*$/, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || fallbackRole;
+}
+
+function getTemplateTrackRole(trackName, fallbackIndex) {
+  const rawName = String(trackName || "").trim();
+  const beforeColon = rawName.includes(":") ? rawName.split(":")[0] : rawName;
+  return normalizeRoleName(beforeColon, `track_${fallbackIndex + 1}`);
+}
+
+function normalizeClipName(role, value, sceneName) {
+  const rawValue = String(value || "").trim();
+  if (rawValue) {
+    return rawValue
+      .replace(/\s+/g, "_")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+
+  return `${role}_${normalizeRoleName(sceneName, "scene")}`;
+}
+
+function getReferenceClipName(role) {
+  return role === "pad" ? "pad_warm_intro_reference" : `${role}_reference`;
+}
+
+function getReferenceSceneClipName(role, isPrimaryReference = false) {
+  if (isPrimaryReference) {
+    return getReferenceClipName(role);
+  }
+
+  const referenceNames = {
+    texture: "texture_reference_air",
+    bass: "bass_reference_root",
+    motif: "motif_reference_phrase",
+    fx: "fx_reference_transition",
+    perc: "perc_reference_groove",
+  };
+
+  return referenceNames[role] || `${role}_reference`;
+}
+
+function getDefaultFoundationScenes() {
+  return [
+    {
+      name: "Reference",
+      clips: {},
+    },
+    {
+      name: "Intro",
+      clips: {
+        pad: "pad_warm_intro",
+        texture: "texture_sparse_air",
+        bass: null,
+        motif: null,
+        fx: "fx_riser_intro",
+        perc: null,
+      },
+    },
+    {
+      name: "Build 1",
+      clips: {
+        pad: "pad_warm_main",
+        texture: "texture_noise_wide",
+        bass: null,
+        motif: "motif_soft_repeat",
+        fx: null,
+        perc: "perc_light_pulse",
+      },
+    },
+    {
+      name: "Build 2",
+      clips: {
+        pad: "pad_warm_main",
+        texture: "texture_movement",
+        bass: "bass_sub_root",
+        motif: "motif_soft_repeat",
+        fx: null,
+        perc: "perc_light_pulse",
+      },
+    },
+    {
+      name: "Main",
+      clips: {
+        pad: "pad_bright_open",
+        texture: "texture_movement",
+        bass: "bass_sub_variation",
+        motif: "motif_high_variant",
+        fx: null,
+        perc: "perc_busier_pattern",
+      },
+    },
+    {
+      name: "Breakdown",
+      clips: {
+        pad: "pad_dark_break",
+        texture: "texture_sparse_air",
+        bass: null,
+        motif: "motif_sparse",
+        fx: "fx_swell_transition",
+        perc: null,
+      },
+    },
+    {
+      name: "Return",
+      clips: {
+        pad: "pad_bright_open",
+        texture: "texture_movement",
+        bass: "bass_sub_root",
+        motif: "motif_soft_repeat",
+        fx: "fx_impact_hit",
+        perc: "perc_light_pulse",
+      },
+    },
+    {
+      name: "Outro",
+      clips: {
+        pad: "pad_fade_out",
+        texture: "texture_sparse_air",
+        bass: null,
+        motif: null,
+        fx: "fx_reverse_tail",
+        perc: null,
+      },
+    },
+  ];
+}
+
+function buildFallbackFoundationPlan({ style, bpm, tracks }) {
+  const roles = tracks.map((track, index) => track.role || getTemplateTrackRole(track.name, index));
+  const defaultScenes = getDefaultFoundationScenes();
+  const referenceRole = roles[0] || "pad";
+  const referenceClipName = getReferenceClipName(referenceRole);
+
+  return {
+    style: String(style || "electronic ambient"),
+    bpm: Number.isFinite(Number(bpm)) ? Number(bpm) : 84,
+    scenes: defaultScenes.map((scene) => ({
+      name: scene.name,
+      clips: Object.fromEntries(
+        roles.map((role) => {
+          if (scene.name === "Reference") {
+            return [role, getReferenceSceneClipName(role, role === referenceRole)];
+          }
+
+          if (Object.hasOwn(scene.clips, role)) {
+            return [role, scene.clips[role]];
+          }
+
+          if (["Intro", "Build 2", "Main", "Return", "Outro"].includes(scene.name)) {
+            return [role, `${role}_${normalizeRoleName(scene.name, "scene")}`];
+          }
+
+          return [role, null];
+        }),
+      ),
+    })),
+    reference: {
+      trackIndex: 1,
+      slotIndex: 1,
+      role: referenceRole,
+      clipName: referenceClipName,
+    },
+    nextStep: "Select sounds manually, then generate musical parts track by track.",
+  };
+}
+
+function normalizeTemplateTracksForFoundation(tracks) {
+  return tracks
+    .map((track, index) => {
+      const name = String(track?.name || track?.displayName || `track ${index + 1}`).trim();
+      const role = normalizeRoleName(track?.role || getTemplateTrackRole(name, index), `track_${index + 1}`);
+
+      return {
+        index: Number.isInteger(track?.index) ? track.index : index + 1,
+        role,
+        name,
+      };
+    })
+    .filter((track) => track.name)
+    .slice(0, 12);
+}
+
+function normalizeTemplateFoundationPlan(input, fallbackContext) {
+  const source = typeof input === "string" ? extractJsonFromText(input) : input;
+  const fallback = buildFallbackFoundationPlan(fallbackContext);
+  const roles = new Set(fallbackContext.tracks.map((track) => track.role));
+
+  function normalizeScene(scene, sceneIndex) {
+    const fallbackScene = fallback.scenes[sceneIndex] || {
+      name: `Scene ${sceneIndex + 1}`,
+      clips: {},
+    };
+    const isReferenceScene = sceneIndex === 0;
+    const name = isReferenceScene ? "Reference" : String(scene?.name || fallbackScene.name).trim();
+    const rawClips = scene?.clips && typeof scene.clips === "object" ? scene.clips : {};
+    const clips = {};
+
+    for (const role of roles) {
+      if (isReferenceScene) {
+        clips[role] = fallbackScene.clips?.[role] ?? null;
+        continue;
+      }
+
+      const matchingClipKey = Object.keys(rawClips).find(
+        (key) => normalizeRoleName(key) === role,
+      );
+      const value =
+        matchingClipKey !== undefined ? rawClips[matchingClipKey] : fallbackScene.clips?.[role] ?? null;
+      clips[role] =
+        value === null || value === false || String(value).trim() === ""
+          ? null
+          : normalizeClipName(role, value, name);
+    }
+
+    return { name, clips };
+  }
+
+  const rawLlmScenes = Array.isArray(source?.scenes) ? source.scenes : [];
+  const firstSceneName = normalizeRoleName(rawLlmScenes[0]?.name || "");
+  const llmScenes = firstSceneName === "reference" ? rawLlmScenes : [null, ...rawLlmScenes];
+  const sceneCount = Math.max(fallback.scenes.length, llmScenes.length);
+  const scenes = Array.from({ length: sceneCount }, (_, sceneIndex) =>
+    normalizeScene(llmScenes[sceneIndex], sceneIndex),
+  )
+    .filter((scene) => scene.name)
+    .slice(0, 12);
+
+  return {
+    style: String(source?.style || fallback.style),
+    bpm:
+      Number.isFinite(Number(source?.bpm)) && Number(source.bpm) >= 40 && Number(source.bpm) <= 220
+        ? Number(source.bpm)
+        : fallback.bpm,
+    scenes: scenes.length ? scenes : fallback.scenes,
+    reference: fallback.reference,
+    nextStep: String(source?.nextStep || fallback.nextStep),
+  };
+}
+
+async function generateTemplateFoundationPlan(context) {
+  const fallback = buildFallbackFoundationPlan(context);
+  const requiredSceneShape = fallback.scenes.map((scene) => ({
+    name: scene.name,
+    clips: Object.fromEntries(context.tracks.map((track) => [track.role, scene.clips[track.role] ?? null])),
+  }));
+
+  if (!LLM_API_KEY) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch(LLM_BASE_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LLM_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        stream: false,
+        temperature: 0.3,
+        max_tokens: 3500,
+        max_input_tokens: LLM_CONTEXT_TOKENS,
+        context_window: LLM_CONTEXT_TOKENS,
+        options: {
+          num_ctx: LLM_CONTEXT_TOKENS,
+        },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You create Ableton Live template foundations. Return strict JSON only, no markdown. This is step 2 only: create scene names and clip names for a full song structure. Do not create notes, automation, devices, presets, arrangement lanes, or parameter changes. Scene 1 is reserved as Reference and must keep only the first track role active as the reusable reference clip. After Reference, return scenes covering intro, builds, main, breakdown, return, and outro. Every scene must include every provided track role as a clip key. Use string clip names when that instrument should participate in the scene, or null when it should stay empty. Keep clip names short, lowercase, underscore_separated.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              task: "Create step 2 foundation scene and clip names.",
+              style: context.style,
+              bpm: context.bpm,
+              tracks: context.tracks,
+              instruction:
+                "Generate the Reference scene first, then all scenes for the song. Scene 1 must stay Reference with Track 1 Slot 1 as the reusable reference clip. Each scene must include all track role keys. Vary clip names by scene and role. Use null where an instrument should not be pulled into that scene.",
+              requiredShape: {
+                style: context.style,
+                bpm: context.bpm,
+                scenes: requiredSceneShape,
+                reference: fallback.reference,
+                nextStep: "Select sounds manually, then generate musical parts track by track.",
+              },
+            }),
+          },
+        ],
+      }),
+    });
+    const payload = await response.json();
+    const message = payload.choices?.[0]?.message?.content;
+
+    if (!response.ok || !message) {
+      return fallback;
+    }
+
+    return normalizeTemplateFoundationPlan(message, context);
+  } catch {
+    return fallback;
+  }
+}
+
+async function applyTemplateStepTwo({ prompt, style, bpm, tracks: requestedTracks }) {
+  return withAbleton(async (ableton) => {
+    const [songTempo, abletonTracks] = await Promise.all([
+      ableton.song.get("tempo").catch(() => bpm),
+      ableton.song.get("tracks"),
+    ]);
+    const trackContext = normalizeTemplateTracksForFoundation(
+      Array.isArray(requestedTracks) && requestedTracks.length
+        ? requestedTracks
+        : abletonTracks.map((track, index) => ({
+            index: index + 1,
+            name: track.raw.name,
+          })),
+    );
+    const foundationContext = {
+      style: String(style || prompt || "current template"),
+      bpm: Number.isFinite(Number(bpm)) ? Number(bpm) : songTempo,
+      tracks: trackContext,
+    };
+    const plan = await generateTemplateFoundationPlan(foundationContext);
+    let scenes = await ensureMinimumScenes(ableton, Math.max(MIN_SESSION_SCENES, plan.scenes.length));
+    const skipped = [];
+
+    for (const [sceneIndex, scene] of plan.scenes.entries()) {
+      if (!scenes[sceneIndex]) {
+        await ableton.song.createScene(-1);
+        scenes = await ableton.song.get("scenes");
+      }
+
+      await scenes[sceneIndex].set("name", scene.name);
+    }
+
+    for (const [trackIndex, trackContextItem] of trackContext.entries()) {
+      const track = abletonTracks[trackIndex];
+      if (!track) {
+        continue;
+      }
+
+      const slots = await track.get("clip_slots");
+
+      for (const [sceneIndex, scene] of plan.scenes.entries()) {
+        const clipName = scene.clips?.[trackContextItem.role] ?? null;
+        if (!clipName) {
+          continue;
+        }
+
+        const slot = slots[sceneIndex];
+        if (!slot) {
+          skipped.push({
+            trackIndex: trackContextItem.index,
+            sceneIndex: sceneIndex + 1,
+            reason: "Clip slot does not exist.",
+          });
+          continue;
+        }
+
+        try {
+          const hasClip = await slot.get("has_clip").catch(() => false);
+          if (!hasClip) {
+            await retryAbleton(() => slot.createClip(4));
+          }
+
+          const clip = await retryAbleton(() => slot.get("clip", false));
+          await retryAbleton(() => clip.set("name", clipName));
+        } catch (error) {
+          skipped.push({
+            trackIndex: trackContextItem.index,
+            sceneIndex: sceneIndex + 1,
+            clipName,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    const dashboard = await buildDashboardFromAbleton(ableton, 1);
+    const { _tracks, ...publicDashboard } = dashboard;
+
+    return {
+      ok: true,
+      message: `Template step 2 applied: ${plan.scenes.length} scenes named and foundation clips prepared.`,
+      step: 2,
+      plan,
+      skipped,
+      dashboard: publicDashboard,
+    };
+  });
+}
+
+async function getClipNameAtSlot(trackIndex, slotIndex, fallbackName) {
+  return withAbleton(async (ableton) => {
+    const track = await getTrackByIndex(ableton, trackIndex);
+    const slots = await track.get("clip_slots");
+    const slot = slots[slotIndex - 1];
+
+    if (!slot) {
+      return fallbackName;
+    }
+
+    if (!(await slot.get("has_clip").catch(() => false))) {
+      return fallbackName;
+    }
+
+    const clip = await slot.get("clip", false).catch(() => null);
+    return clip?.raw?.name || fallbackName;
+  });
+}
+
+function buildReferenceAnchorPrompt({ prompt, style, bpm, clipName, anchorPriority }) {
+  return [
+    `Template style: ${style || prompt || "current template"}`,
+    `Tempo: ${Number.isFinite(Number(bpm)) ? Number(bpm) : "current"} BPM`,
+    `Reserved reference clip: ${clipName}`,
+    `Anchor priority: ${anchorPriority.join(" > ")}`,
+    "Create only the first reference anchor MIDI clip for this template.",
+    "Follow the anchor priority by making the harmonic identity the first decision unless the selected instrument is clearly not harmonic.",
+    "This clip should act as the reusable musical reference for the rest of the template: key center, major/minor/modal mood, chord color, note density, and phrase length.",
+    "Do not create drums unless the selected target track is actually a drum rack.",
+    "Do not create clips for other tracks or scenes yet.",
+    "Return a PLAN_JSON block for one create_clip action only.",
+  ].join("\n");
+}
+
+async function applyTemplateReferenceAnchor({ prompt, style, bpm, reference, anchorPriority }) {
+  const referenceTrackIndex = Number(reference?.trackIndex || 1);
+  const referenceSlotIndex = Number(reference?.slotIndex || 1);
+  const priority = Array.isArray(anchorPriority) && anchorPriority.length
+    ? anchorPriority.map((item) => normalizeRoleName(item)).filter(Boolean)
+    : ["harmonic", "melodic", "bass", "rhythmic", "texture"];
+  const clipName = await getClipNameAtSlot(
+    referenceTrackIndex,
+    referenceSlotIndex,
+    reference?.clipName || getReferenceClipName("pad"),
+  );
+  const anchorPrompt = buildReferenceAnchorPrompt({
+    prompt,
+    style,
+    bpm,
+    clipName,
+    anchorPriority: priority,
+  });
+  const result = await runAndExecuteLlmCommand(
+    anchorPrompt,
+    referenceTrackIndex,
+    referenceSlotIndex,
+    {
+      clipName,
+    },
+  );
+  const dashboard = await getDashboard(referenceTrackIndex);
+
+  return {
+    ...result,
+    step: 3,
+    anchorPriority: priority,
+    reference: {
+      trackIndex: referenceTrackIndex,
+      slotIndex: referenceSlotIndex,
+      clipName,
+    },
+    dashboard,
+  };
+}
+
+async function collectTemplatePartTargets({
+  referenceTrackIndex = 1,
+  referenceSlotIndex = 1,
+  overwrite = false,
+  onlyReferenceScene = true,
+}) {
+  return withAbleton(async (ableton) => {
+    const [tempo, tracks, scenes] = await Promise.all([
+      ableton.song.get("tempo"),
+      ableton.song.get("tracks"),
+      ensureMinimumScenes(ableton, MIN_SESSION_SCENES),
+    ]);
+    const referenceTrack = tracks[referenceTrackIndex - 1];
+
+    if (!referenceTrack) {
+      throw new Error(`Reference track ${referenceTrackIndex} does not exist.`);
+    }
+
+    const referenceSummary = await summarizeReferenceClipFromTrack(
+      referenceTrack,
+      referenceTrackIndex,
+      referenceSlotIndex,
+    );
+
+    if (!referenceSummary.clip.noteCount) {
+      throw new Error(
+        `Reference track ${referenceTrackIndex} slot ${referenceSlotIndex} has no MIDI notes yet. Run Step 3 first.`,
+      );
+    }
+
+    const sceneSummaries = await Promise.all(
+      scenes.map((scene, index) => summarizeSceneListItem(scene, index + 1)),
+    );
+    const targets = [];
+
+    for (const [trackIndex, track] of tracks.entries()) {
+      const trackSummary = await summarizeTrack(track, trackIndex + 1);
+      const trackContext = inferTrackMode(trackSummary);
+      const primaryDevice = trackContext.primaryDevice;
+
+      if (onlyReferenceScene) {
+        const isReferenceTrack = trackIndex + 1 === referenceTrackIndex;
+        if (isReferenceTrack) {
+          continue;
+        }
+
+        const slots = await track.get("clip_slots");
+        const slot = slots[referenceSlotIndex - 1];
+        if (!slot) {
+          continue;
+        }
+
+        let clipSummary = null;
+        const hasClip = await slot.get("has_clip").catch(() => false);
+
+        if (!hasClip) {
+          const role = getTemplateTrackRole(trackSummary.track.name, trackIndex);
+          const clipName = getReferenceSceneClipName(role, false);
+
+          try {
+            await retryAbleton(() => slot.createClip(4));
+            const createdClip = await retryAbleton(() => slot.get("clip", false));
+            await retryAbleton(() => createdClip.set("name", clipName));
+            clipSummary = await summarizeClip(createdClip);
+          } catch {
+            continue;
+          }
+        } else {
+          const rawClip = await slot.get("clip", false).catch(() => null);
+          if (!rawClip || !rawClip.raw?.is_midi_clip) {
+            continue;
+          }
+          clipSummary = await summarizeClip(rawClip);
+        }
+
+        if (!clipSummary || (!overwrite && clipSummary.noteCount > 0)) {
+          continue;
+        }
+
+        targets.push({
+          trackIndex: trackIndex + 1,
+          slotIndex: referenceSlotIndex,
+          trackName: trackSummary.track.name,
+          sceneName: sceneSummaries[referenceSlotIndex - 1]?.name || `Scene ${referenceSlotIndex}`,
+          clipName: clipSummary.name || `Clip ${referenceSlotIndex}`,
+          mode: trackContext.mode,
+          instrument: primaryDevice
+            ? {
+                name: primaryDevice.name,
+                className: primaryDevice.className,
+                type: primaryDevice.type,
+                currentPresetName: primaryDevice.currentPresetName || null,
+              }
+            : null,
+          drumPads:
+            trackContext.mode === "drum" && Array.isArray(trackContext.soundPalette)
+              ? trackContext.soundPalette
+              : [],
+        });
+        continue;
+      }
+
+      for (const slot of trackSummary.clipSlots) {
+        const isReferenceSlot =
+          trackIndex + 1 === referenceTrackIndex && slot.index === referenceSlotIndex;
+
+        if (isReferenceSlot || !slot.hasClip || !slot.clip) {
+          continue;
+        }
+
+        if (!overwrite && slot.clip.noteCount > 0) {
+          continue;
+        }
+
+        targets.push({
+          trackIndex: trackIndex + 1,
+          slotIndex: slot.index,
+          trackName: trackSummary.track.name,
+          sceneName: sceneSummaries[slot.index - 1]?.name || `Scene ${slot.index}`,
+          clipName: slot.clip.name || `Clip ${slot.index}`,
+          mode: trackContext.mode,
+          instrument: primaryDevice
+            ? {
+                name: primaryDevice.name,
+                className: primaryDevice.className,
+                type: primaryDevice.type,
+                currentPresetName: primaryDevice.currentPresetName || null,
+              }
+            : null,
+          drumPads:
+            trackContext.mode === "drum" && Array.isArray(trackContext.soundPalette)
+              ? trackContext.soundPalette
+              : [],
+        });
+      }
+    }
+
+    return {
+      song: { tempo },
+      reference: referenceSummary,
+      targets,
+    };
+  });
+}
+
+function buildTemplatePartPrompt({ prompt, style, bpm, target, reference }) {
+  const instrumentText = target.instrument
+    ? `${target.instrument.name} (${target.instrument.className}, ${target.instrument.type})${
+        target.instrument.currentPresetName ? ` preset ${target.instrument.currentPresetName}` : ""
+      }`
+    : "unknown instrument";
+  const drumText = target.drumPads?.length
+    ? [
+        "Target drum rack instruments:",
+        ...target.drumPads.map(
+          (pad) => `- ${pad.name}${pad.note !== null ? ` note ${pad.note}` : ""}`,
+        ),
+      ].join("\n")
+    : "";
+
+  return [
+    `Template style: ${style || prompt || "current template"}`,
+    `Tempo: ${Number.isFinite(Number(bpm)) ? Number(bpm) : "current"} BPM`,
+    `Reference anchor: Track ${reference.track.index} "${reference.track.name}" Slot ${reference.slot.index} "${reference.clip.name}"`,
+    `Reference anchor notes: ${reference.clip.noteCount} notes, pitches ${reference.clip.uniquePitches.join(", ") || "none"}`,
+    `Target scene: ${target.sceneName}`,
+    `Target track: ${target.trackIndex} "${target.trackName}"`,
+    `Target clip: Slot ${target.slotIndex} "${target.clipName}"`,
+    `Target instrument: ${instrumentText}`,
+    `Target mode: ${target.mode}`,
+    drumText,
+    "Generate this one target clip only, using the reference anchor for key, mood, phrase length, density, and energy.",
+    target.mode === "drum"
+      ? "Because this target is drums, use the listed drum rack instruments/notes and create a complementary rhythmic part. Do not invent melodic pitches outside the drum pads."
+      : "Because this target is melodic/harmonic, write a part that fits the reference anchor without copying it exactly.",
+    "Respect the clip name and scene role when deciding density and purpose.",
+    "Return a PLAN_JSON block for one create_clip action only.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function getTemplateReferenceSummary(referenceTrackIndex, referenceSlotIndex) {
+  return withAbleton(async (ableton) => {
+    const referenceTrack = await getTrackByIndex(ableton, referenceTrackIndex);
+    return summarizeReferenceClipFromTrack(referenceTrack, referenceTrackIndex, referenceSlotIndex);
+  });
+}
+
+function normalizeAnchorPriority(anchorPriority) {
+  return Array.isArray(anchorPriority) && anchorPriority.length
+    ? anchorPriority.map((item) => normalizeRoleName(item)).filter(Boolean)
+    : ["harmonic", "melodic", "bass", "rhythmic", "texture"];
+}
+
+async function generateTemplatePartFromTarget({
+  prompt,
+  style,
+  bpm,
+  reference,
+  target,
+  anchorPriority,
+}) {
+  const referenceTrackIndex = Number(reference?.trackIndex || reference?.track?.index || 1);
+  const referenceSlotIndex = Number(reference?.slotIndex || reference?.slot?.index || 1);
+  const priority = normalizeAnchorPriority(anchorPriority);
+  const referenceSummary = await getTemplateReferenceSummary(
+    referenceTrackIndex,
+    referenceSlotIndex,
+  );
+
+  const targetPrompt = buildTemplatePartPrompt({
+    prompt: `${prompt || ""}\nAnchor priority: ${priority.join(" > ")}`,
+    style,
+    bpm,
+    target,
+    reference: referenceSummary,
+  });
+
+  let result;
+  try {
+    result = await runAndExecuteLlmCommand(
+      targetPrompt,
+      Number(target.trackIndex),
+      Number(target.slotIndex),
+      {
+        clipName: target.clipName,
+        references: [
+          {
+            trackIndex: referenceTrackIndex,
+            slotIndex: referenceSlotIndex,
+          },
+        ],
+      },
+    );
+  } catch (error) {
+    result = {
+      ok: false,
+      model: LLM_MODEL,
+      message: "",
+      execution: {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        message: "Template part could not be generated.",
+      },
+    };
+  }
+
+  const dashboard = await getDashboard(Number(target.trackIndex) || referenceTrackIndex);
+  const summary = {
+    ok: Boolean(result.execution?.ok),
+    trackIndex: Number(target.trackIndex),
+    slotIndex: Number(target.slotIndex),
+    trackName: target.trackName,
+    sceneName: target.sceneName,
+    clipName: target.clipName,
+    instrument: target.instrument,
+    mode: target.mode,
+    error: result.execution?.ok ? null : result.execution?.error || "Execution failed.",
+  };
+
+  return {
+    ok: summary.ok,
+    model: result.model,
+    message: result.message,
+    execution: result.execution,
+    result: summary,
+    reference: {
+      trackIndex: referenceTrackIndex,
+      slotIndex: referenceSlotIndex,
+      clipName: referenceSummary.clip.name,
+    },
+    dashboard,
+  };
+}
+
+async function applyTemplatePartsFromReference({
+  prompt,
+  style,
+  bpm,
+  reference,
+  anchorPriority,
+  overwrite = false,
+}) {
+  const referenceTrackIndex = Number(reference?.trackIndex || 1);
+  const referenceSlotIndex = Number(reference?.slotIndex || 1);
+  const priority = normalizeAnchorPriority(anchorPriority);
+  const collected = await collectTemplatePartTargets({
+    referenceTrackIndex,
+    referenceSlotIndex,
+    overwrite,
+  });
+  const results = [];
+
+  for (const target of collected.targets) {
+    const generated = await generateTemplatePartFromTarget({
+      prompt,
+      style,
+      bpm: bpm || collected.song.tempo,
+      reference: {
+        trackIndex: referenceTrackIndex,
+        slotIndex: referenceSlotIndex,
+      },
+      target,
+      anchorPriority: priority,
+    });
+
+    results.push(generated.result);
+  }
+
+  const dashboard = await getDashboard(referenceTrackIndex);
+  const generatedCount = results.filter((result) => result.ok).length;
+
+  return {
+    ok: results.every((result) => result.ok),
+    step: 4,
+    message: `Generated ${generatedCount} of ${collected.targets.length} reference scene clips from the reference anchor.`,
+    reference: {
+      trackIndex: referenceTrackIndex,
+      slotIndex: referenceSlotIndex,
+      clipName: collected.reference.clip.name,
+    },
+    anchorPriority: priority,
+    generatedCount,
+    targetCount: collected.targets.length,
+    results,
+    dashboard,
+  };
+}
+
 async function ensureMinimumScenes(ableton, minimumScenes) {
   let scenes = await ableton.song.get("scenes");
 
@@ -658,6 +1469,21 @@ async function ensureMinimumScenes(ableton, minimumScenes) {
   }
 
   return scenes;
+}
+
+async function summarizeSceneListItem(scene, index) {
+  const [name, isTriggered, isEmpty] = await Promise.all([
+    scene.get("name").catch(() => scene.raw.name || ""),
+    scene.get("is_triggered").catch(() => false),
+    scene.get("is_empty").catch(() => false),
+  ]);
+
+  return {
+    index,
+    name: name || `Scene ${index}`,
+    isTriggered,
+    isEmpty,
+  };
 }
 
 async function buildDashboardFromAbleton(ableton, trackIndex) {
@@ -685,6 +1511,9 @@ async function buildDashboardFromAbleton(ableton, trackIndex) {
       currentSongTime,
       sceneCount: scenes.length,
     },
+    scenes: await Promise.all(
+      scenes.map((scene, index) => summarizeSceneListItem(scene, index + 1)),
+    ),
     tracks: await Promise.all(
       tracks.map((track, index) => summarizeTrackListItem(track, index + 1)),
     ),
@@ -897,6 +1726,10 @@ async function runLlmCommand(prompt, trackIndex, options = {}) {
 function applyPlanOverrides(plan, overrides = {}) {
   return {
     ...plan,
+    clipName:
+      typeof overrides.clipName === "string" && overrides.clipName.trim()
+        ? overrides.clipName.trim()
+        : plan.clipName,
     trackIndex:
       Number.isInteger(overrides.trackIndex) && overrides.trackIndex > 0
         ? overrides.trackIndex
@@ -1205,7 +2038,11 @@ async function runAndExecuteLlmCommand(prompt, trackIndex, slotIndex, options = 
 
   try {
     const normalizedPlan = normalizePlan(llmResult.message);
-    const overriddenPlan = applyPlanOverrides(normalizedPlan, { trackIndex, slotIndex });
+    const overriddenPlan = applyPlanOverrides(normalizedPlan, {
+      trackIndex,
+      slotIndex,
+      clipName: options.clipName,
+    });
     executionResult = await executeClipPlan(overriddenPlan);
   } catch (error) {
     executionResult = {
@@ -1594,6 +2431,96 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = await enqueue(() => applyTemplateStepOne(prompt));
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/step-two") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+
+      const payload = await enqueue(() =>
+        applyTemplateStepTwo({
+          prompt,
+          style: body.style,
+          bpm: body.bpm,
+          tracks: body.tracks,
+        }),
+      );
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/reference-anchor") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+
+      const payload = await enqueue(() =>
+        applyTemplateReferenceAnchor({
+          prompt,
+          style: body.style,
+          bpm: body.bpm,
+          reference: body.reference,
+          anchorPriority: body.anchorPriority,
+        }),
+      );
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/generate-parts") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+
+      const payload = await enqueue(() =>
+        applyTemplatePartsFromReference({
+          prompt,
+          style: body.style,
+          bpm: body.bpm,
+          reference: body.reference,
+          anchorPriority: body.anchorPriority,
+          overwrite: body.overwrite === true,
+        }),
+      );
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/part-targets") {
+      const body = await readJsonBody(req);
+      const referenceTrackIndex = Number(body.reference?.trackIndex || 1);
+      const referenceSlotIndex = Number(body.reference?.slotIndex || 1);
+      const payload = await enqueue(() =>
+        collectTemplatePartTargets({
+          referenceTrackIndex,
+          referenceSlotIndex,
+          overwrite: body.overwrite === true,
+          onlyReferenceScene: body.onlyReferenceScene !== false,
+        }),
+      );
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/generate-part") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+
+      if (!body.target || typeof body.target !== "object") {
+        sendJson(res, 400, { error: "target is required." });
+        return;
+      }
+
+      const payload = await enqueue(() =>
+        generateTemplatePartFromTarget({
+          prompt,
+          style: body.style,
+          bpm: body.bpm,
+          reference: body.reference,
+          target: body.target,
+          anchorPriority: body.anchorPriority,
+        }),
+      );
       sendJson(res, 200, payload);
       return;
     }
