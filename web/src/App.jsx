@@ -46,6 +46,7 @@ const VIEW_TABS = [
   { id: "session", label: "Session View" },
   { id: "arrangement", label: "Arrangement View" },
 ];
+const DEFAULT_TEMPLATE_PROMPT = "electronic ambient";
 
 function getTrackPalette(trackIndex) {
   return TRACK_PALETTE[(trackIndex - 1) % TRACK_PALETTE.length];
@@ -446,6 +447,89 @@ function MidiNotePreview({ clip, isTargeted, onSelect }) {
   );
 }
 
+function TemplateBuilder({
+  isRunning,
+  onRun,
+  plan,
+  prompt,
+  setPrompt,
+}) {
+  return (
+    <section className="panel template-builder">
+      <div className="template-builder__header">
+        <div>
+          <span className="field-label">Template Builder</span>
+          <strong>Step 1: Style, BPM, and track names</strong>
+        </div>
+        <StatusPill active={Boolean(plan)}>Step 1</StatusPill>
+      </div>
+
+      <div className="template-builder__body">
+        <label>
+          <span className="field-label">User Prompt</span>
+          <input
+            className="template-builder__input"
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="electronic ambient"
+            type="text"
+            value={prompt}
+          />
+        </label>
+        <button
+          className="secondary-button template-builder__run"
+          disabled={isRunning || !prompt.trim()}
+          onClick={onRun}
+          type="button"
+        >
+          {isRunning ? "Creating Template..." : "Run Step 1 Setup"}
+        </button>
+      </div>
+
+      <div className="template-builder__steps">
+        <div className="template-step template-step--active">
+          <span>1</span>
+          <div>
+            <strong>Create skeleton</strong>
+            <p>Set tempo and create/rename tracks.</p>
+          </div>
+        </div>
+        <div className="template-step">
+          <span>2</span>
+          <div>
+            <strong>Select sounds manually</strong>
+            <p>Choose instruments, VST presets, and racks for each track.</p>
+          </div>
+        </div>
+        <div className="template-step">
+          <span>3</span>
+          <div>
+            <strong>Generate musical parts</strong>
+            <p>Use the AI workflow track by track after sounds are loaded.</p>
+          </div>
+        </div>
+      </div>
+
+      {plan ? (
+        <div className="template-plan">
+          <div className="template-plan__summary">
+            <span>{plan.style}</span>
+            <strong>{plan.bpm} BPM</strong>
+          </div>
+          <div className="template-plan__tracks">
+            {plan.tracks.map((track, index) => (
+              <div className="template-plan__track" key={`${track.name}-${index}`}>
+                <span>{index + 1}</span>
+                <strong>{track.name}</strong>
+              </div>
+            ))}
+          </div>
+          <p>{plan.nextStep || "Select sounds manually for each track."}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState(null);
   const [selectedTrack, setSelectedTrack] = useState(1);
@@ -459,6 +543,9 @@ export function App() {
   const [llmResponse, setLlmResponse] = useState("");
   const [llmModel, setLlmModel] = useState("");
   const [llmExecutionState, setLlmExecutionState] = useState(null);
+  const [templatePrompt, setTemplatePrompt] = useState(DEFAULT_TEMPLATE_PROMPT);
+  const [templatePlan, setTemplatePlan] = useState(null);
+  const [isRunningTemplate, setIsRunningTemplate] = useState(false);
   const [commandDraft, setCommandDraft] = useState(
     "Create a MIDI idea that fits the selected track and instrument.",
   );
@@ -544,6 +631,34 @@ export function App() {
     startTransition(() => {
       setDashboard(data);
     });
+  });
+
+  const runTemplateStepOne = useEffectEvent(async () => {
+    setIsRunningTemplate(true);
+    setError("");
+    setActionMessage("");
+
+    try {
+      const result = await fetchJson("/api/template/step-one", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: templatePrompt,
+        }),
+      });
+
+      startTransition(() => {
+        setTemplatePlan(result.plan);
+        setDashboard(result.dashboard);
+        setSelectedTrack(1);
+        setSelectedSlotIndex(result.dashboard?.selectedTrack?.clipSlots?.[0]?.index ?? null);
+      });
+      setActionMessage(result.message);
+    } finally {
+      setIsRunningTemplate(false);
+    }
   });
 
   const runAiOnTarget = useEffectEvent(async () => {
@@ -773,6 +888,22 @@ export function App() {
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
+
+      <TemplateBuilder
+        isRunning={isRunningTemplate}
+        onRun={() => {
+          runTemplateStepOne().catch((templateError) => {
+            setError(
+              templateError instanceof Error
+                ? templateError.message
+                : String(templateError),
+            );
+          });
+        }}
+        plan={templatePlan}
+        prompt={templatePrompt}
+        setPrompt={setTemplatePrompt}
+      />
 
       <section className="stats-grid">
         <article className="panel stat-card">

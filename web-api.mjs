@@ -521,6 +521,134 @@ async function setDeviceParameterAndDashboard(trackIndex, deviceIndex, parameter
   });
 }
 
+function buildFallbackTemplatePlan(prompt) {
+  const normalizedPrompt = String(prompt || "").trim() || "electronic ambient";
+  const isAmbient = /ambient|drone|space|cinematic|texture/i.test(normalizedPrompt);
+
+  return {
+    style: normalizedPrompt,
+    bpm: isAmbient ? 84 : 124,
+    tracks: [
+      { role: "pad", name: "pad: warm analog slow" },
+      { role: "texture", name: "texture: noisy vinyl wide" },
+      { role: "bass", name: "bass: sub soft sparse" },
+      { role: "motif", name: "motif: bell ambient repetitive" },
+      { role: "fx", name: "fx: airy reversed riser" },
+      { role: "perc", name: "perc: light organic irregular" },
+    ],
+    nextStep: "Select sounds manually for each track.",
+  };
+}
+
+function normalizeTemplatePlan(input, fallbackPrompt) {
+  const source = typeof input === "string" ? extractJsonFromText(input) : input;
+  const fallback = buildFallbackTemplatePlan(fallbackPrompt);
+  const tracks = Array.isArray(source?.tracks)
+    ? source.tracks
+        .map((track, index) => {
+          const fallbackTrack = fallback.tracks[index] || {
+            role: `track ${index + 1}`,
+            name: `track ${index + 1}: sound placeholder`,
+          };
+          const role = String(track.role || fallbackTrack.role).trim();
+          const name = String(track.name || `${role}: ${track.description || fallbackTrack.name}`).trim();
+
+          return {
+            role,
+            name: name.includes(":") ? name : `${role}: ${name}`,
+          };
+        })
+        .slice(0, 8)
+    : fallback.tracks;
+
+  return {
+    style: String(source?.style || fallback.style),
+    bpm:
+      Number.isFinite(Number(source?.bpm)) && Number(source.bpm) >= 40 && Number(source.bpm) <= 220
+        ? Number(source.bpm)
+        : fallback.bpm,
+    tracks: tracks.length ? tracks : fallback.tracks,
+    nextStep: String(source?.nextStep || fallback.nextStep),
+  };
+}
+
+async function generateTemplatePlan(prompt) {
+  if (!LLM_API_KEY) {
+    return buildFallbackTemplatePlan(prompt);
+  }
+
+  try {
+    const response = await fetch(LLM_BASE_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LLM_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        stream: false,
+        temperature: 0.35,
+        max_tokens: 2500,
+        max_input_tokens: LLM_CONTEXT_TOKENS,
+        context_window: LLM_CONTEXT_TOKENS,
+        options: {
+          num_ctx: LLM_CONTEXT_TOKENS,
+        },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You create Ableton Live song template starter plans. Return strict JSON only, no markdown. The JSON shape must be {\"style\":\"...\",\"bpm\":84,\"tracks\":[{\"role\":\"pad\",\"name\":\"pad: warm analog slow\"}],\"nextStep\":\"Select sounds manually for each track.\"}. For step 1, only choose tempo and track names. Do not choose plugins, presets, notes, clips, devices, automation, or arrangement yet. Create 6 tracks unless the prompt strongly requires otherwise.",
+          },
+          {
+            role: "user",
+            content: `Create step 1 template plan for: ${prompt}`,
+          },
+        ],
+      }),
+    });
+    const payload = await response.json();
+    const message = payload.choices?.[0]?.message?.content;
+
+    if (!response.ok || !message) {
+      return buildFallbackTemplatePlan(prompt);
+    }
+
+    return normalizeTemplatePlan(message, prompt);
+  } catch {
+    return buildFallbackTemplatePlan(prompt);
+  }
+}
+
+async function applyTemplateStepOne(prompt) {
+  const plan = await generateTemplatePlan(prompt);
+
+  return withAbleton(async (ableton) => {
+    await ableton.song.set("tempo", plan.bpm);
+    let tracks = await ableton.song.get("tracks");
+
+    while (tracks.length < plan.tracks.length) {
+      await ableton.song.createMidiTrack(-1);
+      tracks = await ableton.song.get("tracks");
+    }
+
+    for (const [index, templateTrack] of plan.tracks.entries()) {
+      await tracks[index].set("name", templateTrack.name);
+    }
+
+    const dashboard = await buildDashboardFromAbleton(ableton, 1);
+    const { _tracks, ...publicDashboard } = dashboard;
+
+    return {
+      ok: true,
+      message: `Template step 1 applied: ${plan.tracks.length} tracks named at ${plan.bpm} BPM.`,
+      step: 1,
+      plan,
+      dashboard: publicDashboard,
+    };
+  });
+}
+
 async function ensureMinimumScenes(ableton, minimumScenes) {
   let scenes = await ableton.song.get("scenes");
 
@@ -1452,6 +1580,20 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const trackIndex = Number(body.trackIndex || 1);
       const payload = await enqueue(() => createSceneAndDashboard(trackIndex));
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/template/step-one") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+
+      if (!prompt) {
+        sendJson(res, 400, { error: "Template prompt is required." });
+        return;
+      }
+
+      const payload = await enqueue(() => applyTemplateStepOne(prompt));
       sendJson(res, 200, payload);
       return;
     }
