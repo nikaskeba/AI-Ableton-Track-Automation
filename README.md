@@ -110,6 +110,8 @@ Create a `.env` file like:
 ABLETON_LLM_BASE_URL="https://your-endpoint/v1/chat/completions"
 ABLETON_LLM_MODEL="your-model"
 ABLETON_LLM_API_KEY="your-token"
+ABLETON_LLM_MAX_TOKENS=20000
+ABLETON_LLM_CONTEXT_TOKENS=20000
 ABLETON_WEB_API_PORT=3030
 ```
 

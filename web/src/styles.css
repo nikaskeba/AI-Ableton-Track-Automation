@@ -687,12 +687,36 @@ button {
   background: rgba(18, 18, 18, 0.76);
 }
 
+.device-control-card--targeted,
+.selected-clip-panel--targeted,
+.midi-preview--targeted {
+  border-color: rgba(143, 199, 255, 0.62);
+  box-shadow:
+    inset 0 0 0 1px rgba(143, 199, 255, 0.2),
+    0 0 0 1px rgba(143, 199, 255, 0.28);
+}
+
 .device-control-card__header {
   display: flex;
   justify-content: space-between;
   align-items: start;
   gap: 14px;
   margin-bottom: 14px;
+}
+
+.device-control-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: end;
+}
+
+.device-control-card__target,
+.selected-clip-panel__target {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .device-control-card__header strong {
@@ -894,6 +918,12 @@ button {
   font-size: 1.05rem;
 }
 
+.selected-clip-panel {
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+
 .selected-clip-panel__header {
   display: flex;
   align-items: start;
@@ -914,6 +944,7 @@ button {
 }
 
 .midi-preview {
+  width: 100%;
   margin-top: 14px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -922,7 +953,9 @@ button {
     linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
     rgba(12, 12, 12, 0.72);
   background-size: 100% 24px;
+  color: inherit;
   overflow-x: auto;
+  text-align: left;
 }
 
 .midi-preview--empty {

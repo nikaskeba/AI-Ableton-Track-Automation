@@ -13,6 +13,8 @@ const LLM_BASE_URL =
   process.env.ABLETON_LLM_BASE_URL || "https://ollama.skeba.info/v1/chat/completions";
 const LLM_MODEL = process.env.ABLETON_LLM_MODEL || "gpt-oss-20b";
 const LLM_API_KEY = process.env.ABLETON_LLM_API_KEY || "";
+const LLM_MAX_TOKENS = Number(process.env.ABLETON_LLM_MAX_TOKENS || 20000);
+const LLM_CONTEXT_TOKENS = Number(process.env.ABLETON_LLM_CONTEXT_TOKENS || 20000);
 const MIN_SESSION_SCENES = Number(process.env.ABLETON_MIN_SESSION_SCENES || 8);
 
 let queue = Promise.resolve();
@@ -726,6 +728,12 @@ async function runLlmCommand(prompt, trackIndex, options = {}) {
       model: LLM_MODEL,
       stream: false,
       temperature: 0.7,
+      max_tokens: LLM_MAX_TOKENS,
+      max_input_tokens: LLM_CONTEXT_TOKENS,
+      context_window: LLM_CONTEXT_TOKENS,
+      options: {
+        num_ctx: LLM_CONTEXT_TOKENS,
+      },
       messages: [
         {
           role: "system",
@@ -817,8 +825,76 @@ function extractJsonFromText(text) {
       .trim();
   }
 
+  function repairJsonLike(input) {
+    return input
+      .replace(/}\s*(?={)/g, "},")
+      .replace(
+        /([}\]"0-9])\s+("(?:action|trackIndex|deviceIndex|slotIndex|clipSlotIndex|parameters|parameterChanges|changes|index|parameterIndex|name|parameterName|value|reason|notes|noteEvents|clipName|lengthBars|length|looping)"\s*:)/g,
+        "$1,$2",
+      )
+      .replace(/,\s*([}\]])/g, "$1");
+  }
+
+  function balanceJsonLike(input) {
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+
+    for (const char of input) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaped = inString;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      if (char === "{" || char === "[") {
+        stack.push(char);
+      } else if (char === "}" && stack.at(-1) === "{") {
+        stack.pop();
+      } else if (char === "]" && stack.at(-1) === "[") {
+        stack.pop();
+      }
+    }
+
+    const suffix = stack
+      .reverse()
+      .map((char) => (char === "{" ? "}" : "]"))
+      .join("");
+
+    return `${input}${suffix}`;
+  }
+
   function parseJsonLike(input) {
-    return JSON.parse(sanitizeJsonLike(input));
+    const sanitized = sanitizeJsonLike(input);
+    const candidates = [
+      sanitized,
+      repairJsonLike(sanitized),
+      balanceJsonLike(repairJsonLike(sanitized)),
+    ];
+    let lastError;
+
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError;
   }
 
   const planBlockMatch = text.match(/PLAN_JSON[\s\S]*?```json\s*([\s\S]*?)```/i);
@@ -1020,6 +1096,331 @@ async function runAndExecuteLlmCommand(prompt, trackIndex, slotIndex, options = 
   };
 }
 
+function buildDeviceLlmPromptSummary(prompt, context, targetDevice) {
+  const selectedTrack = context.selectedTrack;
+  const parameterSummary = targetDevice.parameters
+    .map(
+      (parameter) =>
+        `${parameter.index}. "${parameter.name}": current=${parameter.value}, min=${parameter.min}, max=${parameter.max}${parameter.isQuantized ? ", quantized/integer-like" : ""}`,
+    )
+    .join("\n");
+
+  return [
+    `User request: ${prompt}`,
+    selectedTrack
+      ? `Target track: ${selectedTrack.index} - ${selectedTrack.name}`
+      : "Target track: unknown",
+    `Target device: ${targetDevice.index}. ${targetDevice.name} (${targetDevice.className}, ${targetDevice.type})`,
+    targetDevice.currentPresetName
+      ? `Target preset: ${targetDevice.currentPresetName}`
+      : "Target preset: none exposed",
+    `Available parameters:\n${parameterSummary}`,
+    "Only use parameters from this list. Include both index and exact name for every changed parameter.",
+    "Return a compact PLAN_JSON block to set only useful changed parameters.",
+  ].join("\n");
+}
+
+function buildDeviceLlmContext(dashboard, targetDevice) {
+  const selectedTrack = dashboard.selectedTrack?.track;
+
+  return {
+    song: dashboard.song,
+    selectedTrack: selectedTrack
+      ? {
+          index: selectedTrack.index,
+          name: selectedTrack.name,
+        }
+      : null,
+    targetDevice: {
+      index: targetDevice.index,
+      name: targetDevice.name,
+      className: targetDevice.className,
+      type: targetDevice.type,
+      currentPresetName: targetDevice.currentPresetName,
+      parameters: targetDevice.parameters,
+    },
+  };
+}
+
+async function runDeviceLlmCommand(prompt, trackIndex, deviceIndex) {
+  if (!LLM_API_KEY) {
+    throw new Error("Missing ABLETON_LLM_API_KEY in .env or process environment.");
+  }
+
+  const dashboard = await withAbleton(async (ableton) => {
+    const dashboardWithTracks = await buildDashboardFromAbleton(ableton, trackIndex);
+    const { _tracks, ...publicDashboard } = dashboardWithTracks;
+    return publicDashboard;
+  });
+  const targetDevice = dashboard.selectedTrack.devices.find((device) => device.index === deviceIndex);
+
+  if (!targetDevice) {
+    throw new Error(`Device ${deviceIndex} does not exist on track ${trackIndex}.`);
+  }
+
+  const context = buildDeviceLlmContext(dashboard, targetDevice);
+  const promptSummary = buildDeviceLlmPromptSummary(prompt, context, targetDevice);
+  const response = await fetch(LLM_BASE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LLM_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: LLM_MODEL,
+      stream: false,
+      temperature: 0.2,
+      max_tokens: LLM_MAX_TOKENS,
+      max_input_tokens: LLM_CONTEXT_TOKENS,
+      context_window: LLM_CONTEXT_TOKENS,
+      options: {
+        num_ctx: LLM_CONTEXT_TOKENS,
+      },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are helping control Ableton Live device parameters. Only adjust the selected target device. Use only the provided parameter names, indexes, min, max, and current values. Do not invent controls such as randomness, wetness, filter, resonance, or macro names unless they appear in the provided parameter list. Return a brief explanation and a PLAN_JSON block. The PLAN_JSON block must contain strict valid JSON only: double-quoted keys/strings, commas between every object and field, no comments, no trailing commas, no markdown inside the JSON. The JSON must be shaped like {\"action\":\"set_device_parameters\",\"trackIndex\":1,\"deviceIndex\":1,\"parameters\":[{\"index\":1,\"name\":\"Device On\",\"value\":1,\"reason\":\"short reason\"}]}. Include the exact parameter name with every index. Keep values within min/max. For quantized parameters, use whole-number values. If no listed parameter is relevant, return an empty parameters array and explain why. Do not create MIDI notes in this mode.",
+        },
+        {
+          role: "user",
+          content: `${promptSummary}\n\n${JSON.stringify({ request: prompt, context }, null, 2)}`,
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error?.message || payload.error || "LLM request failed.");
+  }
+
+  const message = payload.choices?.[0]?.message?.content;
+  if (!message) {
+    throw new Error("LLM response did not include a message.");
+  }
+
+  return {
+    ok: true,
+    model: payload.model || LLM_MODEL,
+    message,
+    context,
+    targetDevice,
+  };
+}
+
+function normalizeDeviceParameterPlan(input) {
+  const source =
+    typeof input === "string"
+      ? extractDeviceParameterPlanFromText(input)
+      : input;
+
+  if (!source || typeof source !== "object") {
+    throw new Error("Device parameter plan must be an object.");
+  }
+
+  const parameters = source.parameters || source.parameterChanges || source.changes;
+
+  return {
+    action:
+      source.action === "setDeviceParameters"
+        ? "set_device_parameters"
+        : source.action || "set_device_parameters",
+    trackIndex: Number(source.trackIndex),
+    deviceIndex: Number(source.deviceIndex),
+    parameters: Array.isArray(parameters)
+      ? parameters.map((parameter) => ({
+          index:
+            Number.isInteger(Number(parameter.index ?? parameter.parameterIndex))
+              ? Number(parameter.index ?? parameter.parameterIndex)
+              : null,
+          name: parameter.name || parameter.parameterName || null,
+          value: Number(parameter.value),
+          reason: parameter.reason || "",
+        }))
+      : [],
+  };
+}
+
+function extractDeviceParameterPlanFromText(text) {
+  try {
+    return extractJsonFromText(text);
+  } catch {
+    const trackIndex = Number(text.match(/"trackIndex"\s*:\s*(\d+)/)?.[1]);
+    const deviceIndex = Number(text.match(/"deviceIndex"\s*:\s*(\d+)/)?.[1]);
+    const parameterObjects = [...text.matchAll(/\{[^{}]*"(?:index|parameterIndex)"\s*:\s*\d+[^{}]*\}/g)];
+    const parameters = parameterObjects
+      .map((match) => {
+        const raw = match[0];
+        const index = Number(raw.match(/"(?:index|parameterIndex)"\s*:\s*(\d+)/)?.[1]);
+        const name = raw.match(/"(?:name|parameterName)"\s*:\s*"([^"]+)"/)?.[1] || null;
+        const value = Number(raw.match(/"value"\s*:\s*(-?\d+(?:\.\d+)?)/)?.[1]);
+        const reason = raw.match(/"reason"\s*:\s*"([^"]+)"/)?.[1] || "";
+
+        return Number.isInteger(index) && Number.isFinite(value)
+          ? {
+              index,
+              name,
+              value,
+              reason,
+            }
+          : null;
+      })
+      .filter(Boolean);
+
+    if (!parameters.length) {
+      throw new Error("Could not find JSON plan in the response.");
+    }
+
+    return {
+      action: "set_device_parameters",
+      trackIndex,
+      deviceIndex,
+      parameters,
+    };
+  }
+}
+
+function normalizeParameterName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+async function executeDeviceParameterPlan(planInput, overrides = {}) {
+  const plan = normalizeDeviceParameterPlan(planInput);
+  const trackIndex =
+    Number.isInteger(overrides.trackIndex) && overrides.trackIndex > 0
+      ? overrides.trackIndex
+      : plan.trackIndex;
+  const deviceIndex =
+    Number.isInteger(overrides.deviceIndex) && overrides.deviceIndex > 0
+      ? overrides.deviceIndex
+      : plan.deviceIndex;
+
+  if (plan.action !== "set_device_parameters") {
+    throw new Error(`Unsupported device plan action: ${plan.action}`);
+  }
+
+  if (!Number.isInteger(trackIndex) || trackIndex <= 0) {
+    throw new Error("Device plan trackIndex must be a positive integer.");
+  }
+
+  if (!Number.isInteger(deviceIndex) || deviceIndex <= 0) {
+    throw new Error("Device plan deviceIndex must be a positive integer.");
+  }
+
+  if (!Array.isArray(plan.parameters) || !plan.parameters.length) {
+    throw new Error("Device plan must include at least one parameter change.");
+  }
+
+  return withAbleton(async (ableton) => {
+    const track = await getTrackByIndex(ableton, trackIndex);
+    const devices = await track.get("devices");
+    const device = devices[deviceIndex - 1];
+
+    if (!device) {
+      throw new Error(
+        `Device ${deviceIndex} does not exist on track "${track.raw.name}". Found ${devices.length} devices.`,
+      );
+    }
+
+    const parameters = await device.get("parameters");
+    const applied = [];
+    const skipped = [];
+
+    for (const change of plan.parameters) {
+      const namedParameterIndex = change.name
+        ? parameters.findIndex(
+            (parameter) =>
+              normalizeParameterName(parameter.raw.name) === normalizeParameterName(change.name),
+          ) + 1
+        : 0;
+      const parameterIndex = change.index || namedParameterIndex;
+      const parameter = parameters[parameterIndex - 1];
+
+      if (!parameter || !Number.isFinite(change.value)) {
+        skipped.push({
+          index: change.index,
+          name: change.name,
+          reason: "Parameter was not found or value was invalid.",
+        });
+        continue;
+      }
+
+      if (
+        change.name &&
+        normalizeParameterName(parameter.raw.name) !== normalizeParameterName(change.name)
+      ) {
+        skipped.push({
+          index: change.index,
+          name: change.name,
+          matchedName: parameter.raw.name,
+          reason: "Parameter index/name mismatch.",
+        });
+        continue;
+      }
+
+      const [min, max] = await Promise.all([parameter.get("min"), parameter.get("max")]);
+      const isQuantized = Boolean(parameter.raw.is_quantized);
+      const requestedValue = isQuantized ? Math.round(change.value) : change.value;
+      const boundedValue = Math.max(min, Math.min(max, requestedValue));
+      await parameter.set("value", boundedValue);
+      const nextValue = await parameter.get("value");
+      applied.push({
+        index: parameterIndex,
+        name: parameter.raw.name,
+        value: nextValue,
+        reason: change.reason,
+      });
+    }
+
+    if (!applied.length) {
+      throw new Error("No valid parameter changes could be applied.");
+    }
+
+    return {
+      ok: true,
+      message: `Applied ${applied.length} parameter change${applied.length === 1 ? "" : "s"} to ${device.raw.name}.`,
+      plan: {
+        ...plan,
+        trackIndex,
+        deviceIndex,
+      },
+      applied,
+      skipped,
+    };
+  });
+}
+
+async function runAndExecuteDeviceLlmCommand(prompt, trackIndex, deviceIndex) {
+  const llmResult = await runDeviceLlmCommand(prompt, trackIndex, deviceIndex);
+  let executionResult;
+
+  try {
+    executionResult = await executeDeviceParameterPlan(llmResult.message, {
+      trackIndex,
+      deviceIndex,
+    });
+  } catch (error) {
+    executionResult = {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      message: "LLM responded, but the device parameter plan could not be applied.",
+    };
+  }
+
+  return {
+    ok: executionResult.ok,
+    model: llmResult.model,
+    message: llmResult.message,
+    context: llmResult.context,
+    targetDevice: llmResult.targetDevice,
+    execution: executionResult,
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || `${HOST}:${PORT}`}`);
 
@@ -1150,6 +1551,29 @@ const server = http.createServer(async (req, res) => {
                 ? [{ trackIndex: referenceTrackIndex, slotIndex: referenceSlotIndex }]
                 : [],
         }),
+      );
+      sendJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/llm/run-device") {
+      const body = await readJsonBody(req);
+      const prompt = String(body.prompt || "").trim();
+      const trackIndex = Number(body.trackIndex || 1);
+      const deviceIndex = Number(body.deviceIndex || 0);
+
+      if (!prompt) {
+        sendJson(res, 400, { error: "Prompt is required." });
+        return;
+      }
+
+      if (!Number.isInteger(deviceIndex) || deviceIndex <= 0) {
+        sendJson(res, 400, { error: "deviceIndex is required." });
+        return;
+      }
+
+      const payload = await enqueue(() =>
+        runAndExecuteDeviceLlmCommand(prompt, trackIndex, deviceIndex),
       );
       sendJson(res, 200, payload);
       return;

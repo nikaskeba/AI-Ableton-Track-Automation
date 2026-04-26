@@ -309,7 +309,7 @@ function ParameterKnob({ device, parameter, onCommit }) {
   );
 }
 
-function DeviceControls({ selected, onSetParameter }) {
+function DeviceControls({ aiTarget, selected, onSelectDevice, onSetParameter }) {
   const devices = selected?.devices?.filter((device) => device.parameters?.length) ?? [];
 
   return (
@@ -325,7 +325,14 @@ function DeviceControls({ selected, onSetParameter }) {
       {devices.length ? (
         <div className="device-control-stack">
           {devices.map((device) => (
-            <article className="device-control-card" key={`${device.index}-${device.name}`}>
+            <article
+              className={`device-control-card ${
+                aiTarget?.type === "device" && aiTarget.deviceIndex === device.index
+                  ? "device-control-card--targeted"
+                  : ""
+              }`}
+              key={`${device.index}-${device.name}`}
+            >
               <div className="device-control-card__header">
                 <div>
                   <strong>
@@ -335,7 +342,18 @@ function DeviceControls({ selected, onSetParameter }) {
                     {device.className} {device.type ? `| ${device.type}` : ""}
                   </p>
                 </div>
-                <StatusPill active={device.isActive}>Device On</StatusPill>
+                <div className="device-control-card__actions">
+                  <StatusPill active={device.isActive}>Device On</StatusPill>
+                  <button
+                    className="secondary-button device-control-card__target"
+                    onClick={() => onSelectDevice(device.index)}
+                    type="button"
+                  >
+                    {aiTarget?.type === "device" && aiTarget.deviceIndex === device.index
+                      ? "AI Target"
+                      : "Target AI"}
+                  </button>
+                </div>
               </div>
               <div className="parameter-knob-grid">
                 {device.parameters.map((parameter) => (
@@ -359,7 +377,7 @@ function DeviceControls({ selected, onSetParameter }) {
   );
 }
 
-function MidiNotePreview({ clip }) {
+function MidiNotePreview({ clip, isTargeted, onSelect }) {
   const notes = Array.isArray(clip?.notes) ? clip.notes : [];
   const length = Number(clip?.length || 4);
   const pitches = [...new Set(notes.map((note) => note.pitch))]
@@ -369,16 +387,24 @@ function MidiNotePreview({ clip }) {
 
   if (!notes.length || !pitches.length) {
     return (
-      <div className="midi-preview midi-preview--empty">
+      <button
+        className={`midi-preview midi-preview--empty ${
+          isTargeted ? "midi-preview--targeted" : ""
+        }`}
+        onClick={onSelect}
+        type="button"
+      >
         No MIDI notes to display.
-      </div>
+      </button>
     );
   }
 
   return (
-    <div
-      className="midi-preview"
+    <button
+      className={`midi-preview ${isTargeted ? "midi-preview--targeted" : ""}`}
+      onClick={onSelect}
       style={{ "--beat-count": beatMarkers.length }}
+      type="button"
     >
       <div className="midi-preview__ruler">
         <span />
@@ -416,7 +442,7 @@ function MidiNotePreview({ clip }) {
           </div>
         ))}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -425,6 +451,7 @@ export function App() {
   const [selectedTrack, setSelectedTrack] = useState(1);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(null);
   const [activeView, setActiveView] = useState("session");
+  const [aiTarget, setAiTarget] = useState({ type: "clip" });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -519,10 +546,15 @@ export function App() {
     });
   });
 
-  const runAiToSelectedSlot = useEffectEvent(async () => {
-    if (!selectedSlot?.index) {
+  const runAiOnTarget = useEffectEvent(async () => {
+    if (aiTarget.type === "clip" && !selectedSlot?.index) {
       throw new Error("Select a clip slot first.");
     }
+
+    if (aiTarget.type === "device" && !aiTarget.deviceIndex) {
+      throw new Error("Select a device control target first.");
+    }
+
     const references = referenceRows
       .map((reference) => ({
         trackIndex: Number(reference.track || 0),
@@ -541,18 +573,31 @@ export function App() {
     setActionMessage("");
 
     try {
-      const result = await fetchJson("/api/llm/run", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: commandDraft,
-          trackIndex: selectedTrack,
-          slotIndex: selectedSlot.index,
-          references,
-        }),
-      });
+      const result =
+        aiTarget.type === "device"
+          ? await fetchJson("/api/llm/run-device", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                prompt: commandDraft,
+                trackIndex: selectedTrack,
+                deviceIndex: aiTarget.deviceIndex,
+              }),
+            })
+          : await fetchJson("/api/llm/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                prompt: commandDraft,
+                trackIndex: selectedTrack,
+                slotIndex: selectedSlot?.index,
+                references,
+              }),
+            });
 
       setLlmResponse(result.message);
       setLlmModel(result.model || "");
@@ -560,7 +605,9 @@ export function App() {
 
       if (result.execution?.ok) {
         setActionMessage(result.execution.message);
-        setSelectedSlotIndex(result.execution.plan.slotIndex);
+        if (aiTarget.type === "clip") {
+          setSelectedSlotIndex(result.execution.plan.slotIndex);
+        }
         await refreshDashboard(selectedTrack, true);
       } else if (result.execution?.error) {
         setError(result.execution.error);
@@ -641,9 +688,27 @@ export function App() {
     }
   }, [selected?.clipSlots, selectedSlotIndex]);
 
+  useEffect(() => {
+    if (
+      aiTarget.type === "device" &&
+      selected?.devices &&
+      !selected.devices.some((device) => device.index === aiTarget.deviceIndex)
+    ) {
+      setAiTarget({ type: "clip" });
+    }
+  }, [aiTarget, selected?.devices]);
+
   const selectedVisibleSlots = getVisibleClipSlots(selected?.clipSlots);
   const selectedSlot =
     selectedVisibleSlots.find((slot) => slot.index === selectedSlotIndex) ?? null;
+  const selectedDevice =
+    aiTarget.type === "device"
+      ? selected?.devices?.find((device) => device.index === aiTarget.deviceIndex) ?? null
+      : null;
+  const aiTargetLabel =
+    aiTarget.type === "device" && selectedDevice
+      ? `Device • ${selectedDevice.name}`
+      : `MIDI Clip • Slot ${selectedSlot?.index ?? "--"}`;
   const workspaceTracks =
     dashboard?.tracks?.map((track) =>
       track.index === selected?.track?.index
@@ -800,16 +865,27 @@ export function App() {
         <section className="workspace-column">
           <section className="panel detail-panel">
             <div className="detail-panel__section detail-panel__section--selected">
-              <div className="selected-clip-panel">
+              <div
+                className={`selected-clip-panel ${
+                  aiTarget.type === "clip" ? "selected-clip-panel--targeted" : ""
+                }`}
+              >
                 <div className="selected-clip-panel__header">
                   <div>
                     <span className="field-label">Selected Clip</span>
                     <strong>
                       {selected?.track?.name
                         ? `${selected.track.name} • Slot ${selectedSlot?.index ?? "--"}`
-                        : "No track selected"}
+                      : "No track selected"}
                     </strong>
                   </div>
+                  <button
+                    className="secondary-button selected-clip-panel__target"
+                    onClick={() => setAiTarget({ type: "clip" })}
+                    type="button"
+                  >
+                    {aiTarget.type === "clip" ? "AI Target" : "Target AI"}
+                  </button>
                 </div>
                 {selectedSlot ? (
                   <>
@@ -823,7 +899,11 @@ export function App() {
                         <p>
                           Pitches: {selectedSlot.clip.uniquePitches.join(", ") || "none"}
                         </p>
-                        <MidiNotePreview clip={selectedSlot.clip} />
+                        <MidiNotePreview
+                          clip={selectedSlot.clip}
+                          isTargeted={aiTarget.type === "clip"}
+                          onSelect={() => setAiTarget({ type: "clip" })}
+                        />
                       </>
                     ) : null}
                   </>
@@ -835,6 +915,8 @@ export function App() {
           </section>
 
           <DeviceControls
+            aiTarget={aiTarget}
+            onSelectDevice={(deviceIndex) => setAiTarget({ type: "device", deviceIndex })}
             selected={selected}
             onSetParameter={(deviceIndex, parameterIndex, value) => {
               setDeviceParameter(deviceIndex, parameterIndex, value).catch((actionError) => {
@@ -854,6 +936,7 @@ export function App() {
             <strong>
               {selected?.track?.name ? `Track ${selected.track.index} • ${selected.track.name}` : "No track selected"}
             </strong>
+            <p>AI Target: {aiTargetLabel}</p>
             {selectedSlot ? (
               <p>
                 Slot {selectedSlot.index}
@@ -945,9 +1028,13 @@ export function App() {
 
             <button
               className="secondary-button command-panel__llm-button"
-              disabled={isRunningAi || !selectedSlot}
+              disabled={
+                isRunningAi ||
+                (aiTarget.type === "clip" && !selectedSlot) ||
+                (aiTarget.type === "device" && !selectedDevice)
+              }
               onClick={() => {
-                runAiToSelectedSlot().catch((actionError) => {
+                runAiOnTarget().catch((actionError) => {
                   setError(
                     actionError instanceof Error
                       ? actionError.message
@@ -957,7 +1044,7 @@ export function App() {
               }}
               type="button"
             >
-              {isRunningAi ? "Generating And Applying..." : "Run AI On Selected Slot"}
+              {isRunningAi ? "Generating And Applying..." : `Run AI On ${aiTarget.type === "device" ? "Device" : "Selected Slot"}`}
             </button>
           </div>
 
